@@ -1,0 +1,87 @@
+name: Build Gen1Recomp release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read manifest version
+        id: manifest
+        shell: bash
+        run: |
+          VERSION=$(python3 - <<'PY'
+          import json
+          with open('manifest.json', 'r', encoding='utf-8') as f:
+              print(json.load(f)['version'])
+          PY
+          )
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag matches manifest
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$TAG" != "${{ steps.manifest.outputs.version }}" ]; then
+            echo "Tag version $TAG does not match manifest version ${{ steps.manifest.outputs.version }}"
+            exit 1
+          fi
+
+      - name: Build root-layout mod ZIP
+        shell: bash
+        run: |
+          OUT="red_3d_player-v${{ steps.manifest.outputs.version }}.zip"
+          python3 - <<'PY'
+          import os, zipfile
+          from pathlib import Path
+          version = "${{ steps.manifest.outputs.version }}"
+          out = Path(f"red_3d_player-v{version}.zip")
+          skip_roots = {'.git', '.github'}
+          skip_names = {out.name}
+          with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+              for p in Path('.').rglob('*'):
+                  if not p.is_file():
+                      continue
+                  if p.parts[0] in skip_roots or p.name in skip_names:
+                      continue
+                  z.write(p, p.as_posix())
+          PY
+          python3 - <<'PY'
+          import zipfile, json
+          from pathlib import Path
+          version = "${{ steps.manifest.outputs.version }}"
+          p=Path(f"red_3d_player-v{version}.zip")
+          with zipfile.ZipFile(p) as z:
+              names=set(z.namelist())
+              assert 'manifest.json' in names, 'manifest.json must be at archive root'
+              manifest=json.loads(z.read('manifest.json'))
+              assert manifest['id']=='red_3d_player'
+              assert manifest['version']==version
+              assert manifest['github']=='randyadr/Gen1Recomp-Character-Selector'
+          print(f'Validated {p}')
+          PY
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: red_3d_player-v${{ steps.manifest.outputs.version }}.zip
+
+      - name: Upload workflow artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: red_3d_player-v${{ steps.manifest.outputs.version }}
+          path: red_3d_player-v${{ steps.manifest.outputs.version }}.zip
