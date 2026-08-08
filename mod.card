@@ -11,6 +11,7 @@ return {
       "Top-level Skin Selector shortcut in the normal pause/start menu, placed immediately after MOD MENUS when present.",
       "Red, Yugi Muto, Naruto, Roronoa Zoro, Cloud, and Aang selectable 3D characters.",
       "Pre-battle pointing gesture, optional X/Square manual jumping, and CJ third-person pistol controls: L2/LT aim, R1/RB fire, Y/Triangle backup fire.",
+      "Persistent 360-degree body facing in Dramatic Shape free-roam: stop moving and the model keeps its last travel direction while the camera orbits independently.",
     },
     known = {
       "Fishing, surfing, and bicycle states still fall back to the stock 2D player renderer.",

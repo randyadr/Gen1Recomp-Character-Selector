@@ -8,6 +8,11 @@ For releases, create a tag such as `v2.8.8`. The included GitHub Actions workflo
 
 This mod evolved from Red 3D Player into a multi-character 3D player system.
 
+
+### Persistent 360° body facing
+
+In Dramatic Shape 1ST/3RD free-roam, the 3D player model keeps the last direction it was actually travelling when movement stops. You can orbit the camera around the standing character without the model automatically snapping back to camera-forward. Moving again at any angle immediately updates the body direction.
+
 ## Characters
 
 - **Red** — the existing polished 107-bone model and animation set.

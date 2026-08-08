@@ -1402,12 +1402,58 @@ function Renderer:updateVoxelMesh(player,p,Voxel3D)
 end
 
 function Renderer:voxelModelMatrix(player,p,Mat4,FirstPerson)
-  -- On Dramatic Shape's 3RD free-walk rung the body bearing is continuous,
-  -- not limited to the four Game Boy facings.  Use that live yaw when it is
-  -- available; ordinary orbit/grid movement still follows p.facing.
+  -- Dramatic Shape's 3RD free-walk normally points a standing body back at
+  -- the camera every frame.  For a real 3D model that feels like the classic
+  -- "snap forward" problem: walk diagonally, release the stick, orbit the
+  -- camera, and the character instantly forgets the direction they were
+  -- actually facing.  Keep the last continuous travel bearing instead.
+  --
+  -- While movement input is held we still trust Dramatic Shape's exact
+  -- continuous bodyYaw, so 360-degree diagonal movement remains native.
+  -- When input returns to zero, the model keeps that last bearing while the
+  -- camera can orbit independently.  Grid/orbit mode and scripted movement
+  -- still fall back to the engine's normal p.facing semantics.
   local liveYaw=FirstPerson and FirstPerson.bodyYaw or nil
+  if player and FirstPerson and liveYaw~=nil then
+    local engaged=true
+    if type(FirstPerson.engaged)=="function" then
+      local ok,v=pcall(FirstPerson.engaged)
+      engaged=ok and v or false
+    end
+
+    if engaged then
+      local moving=false
+      if type(FirstPerson.moveVector)=="function" then
+        local ok,mx,mz=pcall(FirstPerson.moveVector)
+        if ok then
+          mx=tonumber(mx) or 0
+          mz=tonumber(mz) or 0
+          moving=(mx*mx+mz*mz)>0.0004
+        end
+      elseif player.moving then
+        moving=true
+      end
+
+      if moving then
+        player.red3dFreeBodyYaw=liveYaw
+      else
+        if player.red3dFreeBodyYaw==nil then
+          player.red3dFreeBodyYaw=YAW[p.facing] or liveYaw
+        end
+        liveYaw=player.red3dFreeBodyYaw
+      end
+    else
+      player.red3dFreeBodyYaw=nil
+    end
+  elseif player then
+    -- bodyYaw becomes nil when free walk releases control (scripts/cutscenes
+    -- or leaving 1ST/3RD).  Do not carry our visual bearing into those modes.
+    player.red3dFreeBodyYaw=nil
+  end
+
   if self.characterId=="CJ" and player and player.red3dADS and player.red3dAimBodyYaw~=nil then
     liveYaw=player.red3dAimBodyYaw
+    player.red3dFreeBodyYaw=liveYaw
   end
   local yaw=(liveYaw or YAW[p.facing] or 0)+self.modelYawOffset
   local m=Mat4.translate(p.px+8,p.gh+(p.lift or 0)+manualJumpLift(player)+CONFIG.groundClearance,p.py+8)

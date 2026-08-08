@@ -1,3 +1,17 @@
+## 2.8.9 - 2026-08-08
+
+### 360-degree persistent body facing
+- Added **persistent free-body facing** for Dramatic Shape's 1ST/3RD continuous movement. While the player is moving, the selected 3D character still follows Dramatic Shape's exact continuous travel bearing at any angle.
+- Releasing movement now **keeps the last body direction** instead of snapping the model back toward the camera. The camera can orbit around a standing character without rotating the character with it, similar to modern third-person directional-movement mods.
+- Starting to move in a new direction immediately updates the body bearing again, including diagonals, strafing, and backwards travel.
+- Leaving free-roam, entering scripted movement, or returning to normal grid/orbit mode clears the retained bearing so normal Gen1Recomp facing rules remain untouched.
+- CJ ADS remains authoritative while aiming; exiting ADS leaves the character at the last aim/body bearing until movement changes it.
+
+### Validation
+- Simulated movement → stop → camera-orbit sequences verify the visual yaw remains fixed after input release and changes again only when movement resumes.
+- Verified normal non-free-roam fallback still uses `p.facing`.
+- GitHub updater metadata remains `randyadr/Gen1Recomp-Character-Selector`.
+
 ## 2.8.8 - 2026-08-08
 
 ### Distribution / updater

@@ -97,3 +97,16 @@ Runtime note: this environment does not contain a complete Gen1Recomp + ROM runt
 - `save.loaded` now re-selects the saved per-game character.
 - Aang upper-arm drop is baked into boneLocal 17/21; runtime upper-arm rest is identity.
 - Final hierarchy simulation verifies hands remain below head/shoulders in the packaged bind pose.
+
+## v2.8.9 persistent 360-degree body-facing simulation
+
+Simulated the visual-facing state machine used by `Renderer:voxelModelMatrix`:
+
+- Enter 3RD facing south, stand still: retained yaw initializes to south.
+- Move northeast: retained yaw follows the continuous Dramatic Shape `bodyYaw`.
+- Release movement and rotate the camera through multiple headings: retained/model yaw stays northeast instead of returning to camera-forward.
+- Resume movement west: retained/model yaw immediately changes west.
+- Leave free-roam or lose `bodyYaw`: retained yaw clears and ordinary `p.facing` resumes.
+- CJ ADS still overrides the retained yaw while aiming.
+
+This targets only the selected 3D model's visual orientation; collision, interaction facing, map scripts, and Dramatic Shape's camera-relative movement remain owned by the host.
