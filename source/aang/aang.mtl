@@ -1,0 +1,13 @@
+# Blender MTL File: 'None'
+# Material Count: 1
+
+newmtl aang.png
+Ns 96.078431
+Ka 1.000000 1.000000 1.000000
+Kd 0.877639 0.516973 0.689440
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 1
+map_Kd aang.png

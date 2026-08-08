@@ -1,0 +1,25 @@
+return {
+  summary = "3D character selector with Red, Yugi Muto, Naruto, Roronoa Zoro, Cloud, Aang, and Carl Johnson (CJ) for overworld and Dramatic Shape battles.",
+  author = "Custom local build",
+  tags = { "graphics", "3d", "player-model", "character-selector" },
+  differences = {
+    changed = {
+      "The on-foot player is rendered as the selected textured 3D skinned character.",
+      "Dramatic Shape battle trainer cards are replaced by the selected 3D character.",
+    },
+    added = {
+      "Top-level Skin Selector shortcut in the normal pause/start menu, placed immediately after MOD MENUS when present.",
+      "Red, Yugi Muto, Naruto, Roronoa Zoro, Cloud, and Aang selectable 3D characters.",
+      "Pre-battle pointing gesture, optional X/Square manual jumping, and CJ third-person pistol controls: L2/LT aim, R1/RB fire, Y/Triangle backup fire.",
+    },
+    known = {
+      "Fishing, surfing, and bicycle states still fall back to the stock 2D player renderer.",
+      "Yugi uses the shared procedural movement system; the supplied SMD idle clips are retained as source assets but are not required at runtime.",
+    },
+  },
+  credits = {
+    { who = "Model assets supplied by the mod user", for_ = "Red, Yugi Muto, Naruto, Roronoa Zoro, Cloud, and Aang character meshes/textures" },
+    { who = "OpenAI", for_ = "Gen1Recomp 3D runtime adapter, selector, conversion tools, and animation integration" },
+  },
+  compat = { engine = ">=0.1.36 <2.0.0", modApi = 2 },
+}

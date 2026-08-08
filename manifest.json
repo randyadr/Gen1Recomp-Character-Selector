@@ -1,0 +1,22 @@
+{
+  "id": "red_3d_player",
+  "name": "3D Character Selector",
+  "version": "2.8.8",
+  "api": 2,
+  "entry": "main.lua",
+  "profile": "content",
+  "category": "GRAPHICS",
+  "game_version": "0.0.0-dev || >=0.1.36 <2.0.0",
+  "priority": 100,
+  "dependencies": [],
+  "optional_dependencies": [
+    "DRAMATIC_SHAPE"
+  ],
+  "conflicts": [],
+  "permissions": [
+    "engine_internals"
+  ],
+  "affects_link": false,
+  "description": "3D character selector for Gen1Recomp/Dramatic Shape. CJ includes L2/LT third-person ADS, pistol shooting, immediate textured live-mesh world fracture, implosion/burst debris, and destructible NPCs/Pokemon/world objects.",
+  "github": "randyadr/Gen1Recomp-Character-Selector"
+}
