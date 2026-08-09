@@ -1,3 +1,675 @@
+## v2.8.73
+
+### Battle Stadium D.O.N. Zoro replacement
+- Removed the old OBJ/procedural Zoro implementation from the active `ZORO` slot.
+- Rebuilt Roronoa Zoro from the supplied Battle Stadium D.O.N. `Unarmed Idle.fbx`, `Fast Run.fbx`, and `Jump.fbx` files.
+- Replaced the old source tree with the new FBX/PS2 texture package and added `tools/convert_zoro_don_fbx.py`.
+- New model: 52 deform bones, 1,397 skinned positions, 3,536 skin influences, 2,618 triangles.
+- Uses the authored idle/run/jump clips and the Z-up runtime conversion; removed the old 180-degree model-facing correction and legacy arm-rest gait.
+
+## v2.8.72
+
+### Self-contained modern Skin Selector
+- Removed the Skin Selector's runtime dependency on `gen1_modern_ui`; the selector now always paints its own responsive high-resolution clean UI.
+- Kept the native `ListMenu` underneath as the input/state owner while covering its classic presentation with a full-window modern overlay.
+- Added responsive list rows, selected-row accenting, ACTIVE badges, high-resolution fonts, controller hints, and a dedicated live 3D portrait card.
+- Increased the Skin Selector portrait renderer ceiling from 960x1080 to 1152x1280 for sharper desktop model previews.
+- Removed `gen1_modern_ui` from `optional_dependencies`; Dramatic Shape remains the only optional renderer integration.
+
+## v2.8.71
+
+### BelleStarmon analog idle / walk / run blending
+- BelleStarmon now keeps separate authored walk and run clips: `Catwalk Walk Forward HighKnees.fbx` for light analog movement and `Fast Run.fbx` for full-stick movement.
+- Left-stick magnitude now drives a smooth walk-to-run crossfade: light tilt stays on walk, 0.55-0.92 stick magnitude blends toward run, and near-full/full tilt reaches the fast run.
+- Keyboard and D-pad movement continue to target the fast run because they have no analog magnitude.
+- Existing movement blending still fades smoothly between idle and locomotion, so transitions are idle -> walk -> run and back rather than hard animation switches.
+- BelleStarmon's gait cadence now blends from a 72-pixel walk cycle to a 31-pixel run cycle without snapping the gait phase.
+
+## v2.8.70
+
+### Modern UI Skin Selector + high-resolution viewer
+- Removed the selector-specific classic `ListMenu:draw()` override so Gen 1 Modern UI 0.8.4 can present the Skin Selector using its normal modern list pipeline.
+- Moved the 3D model portrait into a post-Modern-UI `render.hud` companion card instead of rendering it inside the 160x144 Game Boy UI canvas.
+- Increased the portrait scene to an adaptive 512-900 x 640-1000 render target and draws it directly in window pixels, eliminating the blocky 64x66 enlarged preview.
+- The portrait card reads the active Modern UI theme colors when available, while keeping the proven true-color Voxel3D/PaletteFX bypass and the v2.8.66+ indexed-model optimization.
+- Added `gen1_modern_ui` as an optional dependency; standalone behavior remains a normal native ListMenu.
+
+## v2.8.69
+
+### Shrek texture cleanup
+- Restored the untouched original `ShrekBody_Col.png`; the previous shirt-hem padding experiment had accidentally baked large smeared light patches into the shirt/sleeve islands.
+- Kept the corrected Shrek geometry-to-material classifier, so the lower shirt hem still uses the body texture instead of turning green.
+- Rebuilt `shrek_model.lua` / `shrek_atlas.png` from the clean texture.
+
+### BelleStarmon locomotion
+- Replaced BelleStarmon's Fast Run locomotion with the supplied `Catwalk Walk Forward HighKnees.fbx` as her normal walking animation.
+- Tuned her gait cadence to about 72 world pixels per animation cycle so the 1.233s authored walk does not play at run speed.
+- Slowed/smoothed BelleStarmon's jump pose playback by sampling a narrower section of the supplied Jumping clip with quintic easing and longer landing blend.
+- Extended BelleStarmon's cosmetic manual jump from 30 to 42 frames for a less abrupt rise/fall while leaving other characters unchanged.
+
+## v2.8.68
+
+### Live Skin Selector 3D viewer
+- Added a live rotating 3D preview of the currently highlighted Skin Selector character.
+- Ported the working Stadium UI Model Viewer technique: transparent off-screen Voxel3D render, PaletteFX shader bypass, premultiplied-alpha UI draw, true-color region marking, and complete LÖVE/Voxel3D state restoration.
+- Kept the stock Gen1Recomp ListMenu update/input behavior while replacing only the Skin Selector draw layout with a split list + preview panel.
+- Left/Right rotates the highlighted model; Up/Down changes the highlighted character; A selects; B backs out.
+- Preview rendering reuses the existing losslessly compacted character mesh and throttles off-screen refreshes to 30 FPS.
+- Preview mesh uploads explicitly invalidate the overworld skin/upload keys so closing the menu cannot leave the world model stuck in a preview pose.
+
+## v2.8.67
+
+### Added
+- Added **BelleStarmon** as a new selectable character.
+- Imported the supplied Neutral Idle, Fast Run, and Jumping clips on the supplied skinned FBX character.
+- Added `source/bellestarmon/`, `tools/convert_bellestarmon_mixamo.py`, `data/bellestarmon_model.lua`, and `assets/bellestarmon_atlas.png`.
+- Preserved the v2.8.66 indexed render-buffer optimization for the new character.
+
+## v2.8.66 - 2026-08-09
+
+### Performance optimization without mesh decimation
+- Added lossless indexed render-vertex compaction. The renderer now updates one vertex per unique position+UV pair instead of rewriting every duplicate triangle corner. Across the roster this cuts the per-frame render-vertex update set from 270,432 to 85,326 (~68.4%) while preserving every triangle and UV.
+- Yami's render update set drops from 147,408 vertices to 29,320; Shrek 25,506 to 5,437; Ash 21,864 to 4,858; Red 25,623 to 5,978.
+- Optimized the skinning hot loop with localized arrays and direct one-/two-influence paths; most Yami vertices use these fast paths.
+- Resampled overly dense embedded idle/jump keys while preserving clip duration and runtime interpolation. Combined model-Lua size drops by ~24.7% (44.39 MiB -> 33.41 MiB).
+- Reduced only the two oversized runtime atlases: Yami 4096x2048 -> 2048x1024 and Ash 2048x2560 -> 1536x1920. No model triangles were removed.
+- Added `tools/optimize_runtime_assets.py` so regenerated source assets can be returned to the optimized release profile.
+
+## v2.8.65
+
+### Added Yami
+- Added **Yami** as a new selectable character while retaining the existing Yugi Muto slot.
+- Imported the supplied 127-bone FBX rig with authored Standing Idle (361 frames / 6.0s), Running (43 frames / 0.7s), and Jump (156 frames / 2.583s) clips.
+- Exported the normal body + facial meshes only, avoiding overlapping damage geometry.
+- Built a material atlas from the supplied skin, cloth, weapon, hair, eye, lens, and eyeshadow diffuse textures.
+- Added `tools/convert_yami_fbx.py` and reproducible source files under `source/yami/`.
+
+## v2.8.64
+
+### Fresh CJ replacement
+- Removed the old active CJ model conversion and replaced it with the newly supplied GTA SA FBXs.
+- Imported the supplied Neutral Idle, Running, and Jumping clips onto the original 58-bone GTA skeleton.
+- Rebuilt CJ's runtime atlas from the supplied upper-body, head, shoes, and legs material textures.
+- Added `tools/convert_cj_fbx.py`; the old `convert_cj_obj.py` workflow is no longer shipped.
+- CJ now uses the `CJ_FBX` embedded-animation profile while retaining the `CJ` character ID for the existing gameplay/shooting hooks.
+
+## v2.8.63
+
+- Fixed Shrek's lower shirt hem/trim rendering green by correcting the geometry-to-texture slot mapping so the accessory body trim uses the body texture instead of the head texture.
+
+## v2.8.61
+
+### Fresh Aang replacement
+- Removed the previous Aang model, atlas source, DAE/OBJ source files, and `convert_aang_dae.py` workflow.
+- Rebuilt Aang from the supplied **Aang (Title Screen)** Mixamo package: four skinned meshes, 52 deform bones, 2,172 positions, 5,345 skin influences, and 4,114 triangles.
+- Imported the supplied authored animations directly: Standing Idle (361 frames / 6.0s), Running (28 frames / 0.45s), and Jumping (71 frames / 1.1667s).
+- Added smooth Aang-specific idle/run blending and a locomotion-aware jump blend so running continues underneath takeoff/landing.
+- Battle intro uses Aang's authored standing pose instead of the legacy Aang/Red arm overrides.
+
+## v2.8.60
+
+### Root-cause custom-model fixes
+- Reverted the broad v2.8.58/v2.8.59 UV/filter/leg-spacing experiments.
+- Fixed the shared **yellow polygon / lighting artifact** at the renderer level: custom character draws now explicitly disable Dramatic Shape's tileset-only window-glass mask before rendering. The upstream shader can otherwise treat unrelated character UVs as lit-window mask coordinates and replace those fragments with warm lamp light.
+- Fixed Naruto's **mirrored Konoha headband** by mirroring only the eight forehead-plate UV triangles inside their real metal-texture strip. The face texture itself is no longer globally flipped.
+- Rebuilt Naruto's lower body with **100 side-specific seam positions**. Shared centre-seam positions are duplicated per leg and opposite-leg weights are stripped, so the legs/feet deform independently instead of stretching connected polygons between them during the run.
+- Naruto remains on the existing imported idle/run/jump clips and faster locomotion cadence.
+
+### Validation
+- Naruto runtime mesh: 52 bones, 1,948 positions, 5,060 influences, 3,408 triangles.
+- The previous severe lower-shin bridge stretch (about 4–5x bind length in the run) is eliminated from the lower-leg region after side-specific seam splitting.
+- Release and repo-ready ZIP integrity checks pass.
+
+## v2.8.57
+
+### Naruto headband + artifact cleanup
+- Switched Naruto back to the correctly oriented secondary face/headband texture so the Leaf Village logo is no longer reversed on the headband.
+- Rebuilt Naruto's atlas from the corrected texture pairing, which removes the stray yellow artifact patches that were showing up on the body/clothing.
+- Preserved the orange clothing texture correction, faster run direction/cadence fix, and Beelstarmon removal from the roster.
+
+## v2.8.57
+
+### Naruto clothing texture slot fix
+- Replaced the incorrect Naruto clothing/body texture slot with the newly supplied 256x256 texture sheet from the user.
+- Regenerated `assets/naruto_atlas.png` and `data/naruto_model.lua` so Naruto's jacket, torso yoke, pants, and pouch now sample the intended clothing texture instead of the previous mismatched one.
+- Kept the headband mirror fix, faster run cadence, and Beelstarmon removal from the active roster.
+
+## v2.8.57
+
+### Naruto headband texture fix
+- Fixed Naruto's mirrored forehead-protector texture by flipping the source metal-plate region used by the model's mirrored UVs before atlas baking.
+- Regenerated `assets/naruto_atlas.png` and `data/naruto_model.lua` from the corrected source texture so the headband emblem no longer appears reversed in-game.
+- Kept the v2.8.54 Naruto orange-outfit texture pass, faster run cadence, and the removal of Beelstarmon from the roster.
+
+## v2.8.57
+
+### Naruto texture pass + roster cleanup
+- Removed **Beelstarmon** from the active Skin Selector roster, character-order table, pause-menu selector list, and packaged character assets.
+- Deleted the packaged `data/beelstarmon_model.lua`, `assets/beelstarmon_atlas.png`, and `source/beelstarmon/` content from the release/repo-ready build.
+- Rebuilt Naruto's atlas from a refined orange body texture so his outfit reads much closer to the intended orange-and-blue look from the supplied reference image.
+- Increased Naruto's run animation cadence again by changing the movement cycle from **27 px to 22 px** so he no longer looks sluggish while moving.
+
+## 2.8.53 - 2026-08-09
+
+### Fixed Naruto
+- Corrected the new Naruto remake's main clothing material to a predominantly **orange** outfit instead of mapping the blue `nrt_tex03` sheet across both body material slots.
+- The converter now supports separate textures for body material 0 and body material 1.
+- Kept the v2.8.52 180-degree Naruto model-facing correction.
+
+### Improved
+- Sped up Naruto's imported Run animation by reducing the distance-locked gait cycle from **38 to 27 world pixels per cycle**. World movement speed itself is unchanged.
+
+### Source research
+- The original Dragon Blade Chronicles Naruto asset pack lists separate `nrt_tex01.png`, `nrt_tex02.png`, and `nrt_tex03.png` textures. The current rebuild uses an orange material-0 reconstruction derived from the supplied texture detail until the exact first two sheets are locally available.
+
+## 2.8.52 - 2026-08-09
+
+### Fixed Naruto
+- Corrected Naruto's facing direction with a Naruto-only 180-degree model yaw offset, so the imported Run clip faces Gen1Recomp travel direction instead of appearing to run backward.
+- Rebuilt Naruto's texture conversion as a per-triangle baked atlas. Each triangle now gets an isolated padded texture cell sampled from the supplied `nrt_tex03.png` / `base00.png`, eliminating body-material sharing and UV/filter bleed.
+- Preserved Naruto's supplied Standing Idle, Run, Jumping clips and locomotion-aware jump blending.
+
+### Validation
+- Rebuilt Naruto from source FBXs using the new baked-atlas converter.
+- Release ZIP and repo-ready ZIP pass integrity checks.
+
+## 2.8.51 - 2026-08-09
+
+### Changed
+- Increased fresh Beelstarmon's localized breast secondary motion from **x20 to x30**.
+- Scaled the idle, run, and jump chest responses by **1.5x** while keeping idle more restrained than locomotion.
+- Preserved the v2.8.50 Naruto character and Beelstarmon's run/jump locomotion blending unchanged.
+
+### Validation
+- Confirmed Beelstarmon still uses only the two appended `LBreast` / `RBreast` secondary-motion bones; buttock physics remains removed.
+- Release ZIP and repo-ready ZIP passed integrity checks.
+
+## 2.8.50 - 2026-08-09
+
+### Added Naruto remake
+- Added **Naruto** back as a new character using the newly supplied Mixamo model/skin from `Standing Idle.fbx`; this does not restore the removed legacy Naruto rig.
+- Imported the supplied **Standing Idle**, **Run**, and **Jumping** animation clips directly onto the shared 52-bone deform skeleton.
+- Added smooth idle/run interpolation and locomotion-aware jump blending so the running gait remains partially active through moving jumps and blends back into the run on landing.
+- Added the new Naruto body/eye texture setup: `nrt_tex03.png` supplies both body material slots and `base00.png` supplies the default eye material. Additional supplied eye/expression frames are retained as source assets.
+
+### Validation
+- New Naruto conversion: 52 deform bones, 1,848 skinned positions, 4,808 skin influences, and 3,408 triangles.
+- Imported clips: Standing Idle = 361 keys / 6.0 s; Run = 39 keys / 0.6333 s; Jumping = 114 keys / 1.8833 s.
+- Naruto atlas material mapping preserves separate body and eye UV regions without UV collapse.
+
+## 2.8.49 - 2026-08-09
+
+### Removed
+- Removed **Naruto** from the active 3D Character Selector roster.
+- Removed Naruto from the Skin Selector character list and runtime character-order table.
+- Removed `data/naruto_model.lua`, `assets/naruto_atlas.png`, the Naruto source folder, and the Naruto converter from the packaged project.
+- Historical changelog/test notes are retained for project history, but Naruto is no longer selectable or shipped as a character asset.
+
+### Validation
+- Confirmed Naruto is absent from the active character config and selector choices.
+- Release ZIP and repo-ready ZIP integrity checks pass.
+
+## 2.8.48 - 2026-08-09
+
+### Changed
+- Removed Beelstarmon's buttock secondary-motion system completely, including the appended `LButt` / `RButt` deform bones and their custom skin weights.
+- Increased Beelstarmon's breast secondary motion from **x10 to x20** for running and jumping, with a stronger but still restrained idle response.
+- Preserved the v2.8.47 locomotion-aware **Fast Run + Jump** blending so run movement continues underneath the airborne jump pose.
+
+### Validation
+- Regenerated the fresh Mixamo Beelstarmon model with only the two appended breast bones.
+- Release ZIP and repo-ready ZIP integrity checks passed.
+
+## 2.8.47 - 2026-08-09
+
+### Beelstarmon secondary motion + locomotion jump
+- Increased Beelstarmon's localized chest secondary motion from **x5 to x10**.
+- Added appended **LButt/RButt deform bones** with localized **x10 buttock secondary motion**. Existing imported Mixamo bone indices remain unchanged.
+- Reweighted only the rear pelvis/glute region to the new butt bones; the long coat/cape is excluded from that region.
+- Reworked the imported Jumping clip blend so moving jumps retain **Fast Run locomotion underneath the jump**: hips keep ~65% run motion, legs ~50%, and the upper body takes more of the authored jump pose.
+- Extended landing blend-out for a smoother jump -> run transition.
+
+### Validation
+- Rebuilt Beelstarmon from the fresh supplied Mixamo Standing Idle / Fast Run / Jumping sources.
+- Both release and repo-ready ZIPs passed integrity checks.
+
+## 2.8.46 - 2026-08-09
+
+### Rebuilt Beelstarmon from the new FBXs
+- Replaced the previous Beelstarmon mesh/rig with the actual model and Mixamo skin contained in the newly supplied `Standing Idle.fbx`.
+- Imported the supplied `Standing Idle.fbx`, `Fast Run.fbx`, and `Jumping.fbx` as Beelstarmon's real idle, run, and jump clips.
+- Converted the new FBX Z-up coordinate system into Gen1Recomp's Y-up runtime orientation.
+- Replaced the old Beelstarmon source set in the repo; the clean source folder now contains only the three new animation FBXs plus the supplied texture and the new Mixamo converter.
+- Added two chest deform bones at the end of the imported skeleton and localized 950 mesh positions to the new chest weights for the requested **x5 breast secondary motion**.
+- Added smoothstep idle/run blending and jump clip crossfades so the imported animations transition without hard pose snaps.
+
+### Validation
+- Fresh model: 54 runtime bones, 12,368 positions, 33,179 skin influences, 17,485 triangles.
+- Imported clips: idle 361 frames / 6.0 s; run 32 frames / 0.5167 s; jump 114 frames / 1.8833 s.
+- UVs remain within the supplied 0..1 texture atlas.
+
+## 2.8.45 - 2026-08-09
+
+### Changed
+- Reset **Beelstarmon** to a fresh rebuild from the original `source/beelstarmon/digimon.fbx` mesh instead of continuing from the previously iterated output.
+- Replaced the Beelstarmon atlas with the newly supplied rebuild texture.
+- Added the newly supplied source animation files to `source/beelstarmon/` for the remake workflow: `Standing Idle (1).fbx`, `Fast Run.fbx`, and `Jumping (1).fbx`.
+- Kept the existing runtime **x5 breast physics** secondary-motion behavior on Beelstarmon.
+
+### Notes
+- This is a clean Beelstarmon content reset intended as the new base for further remaking/tuning.
+
+## 2.8.44 - 2026-08-09
+
+### Fixed Ash textures
+- Corrected Ash Ketchum's authored UV conventions instead of clamping them. The body FBX stores V one tile below the normal range (`-1..0`), so it now maps with the proper shifted/flipped V conversion instead of collapsing to one texture row.
+- Preserved wrapped negative face U coordinates instead of clamping them to the atlas edge. This restores the face/eye material sampling.
+- Kept ordinary FBX V flipping for the arms/hat/hair and face materials.
+
+### Added Ash idle + jump
+- Imported the supplied **Standing Idle.fbx** directly onto Ash's existing Mixamo skeleton: 344 keys over ~5.7167 seconds.
+- Ash now uses the supplied Standing Idle while stopped and the supplied Slow Run while moving.
+- Added smoothstep idle/run blending so starts and stops ease between the two imported clips.
+- Added a custom Ash jump pose layered over the currently blended idle/run pose. The jump envelope returns to zero at takeoff/landing, so jumping blends back into the imported animations instead of popping to a separate pose.
+- Jump keeps Gen1Recomp's world-space jump arc; the embedded pose only handles body articulation.
+
+### Validation
+- Reconverted Ash: 52 deform bones, 3,819 skinned positions, 9,124 skin influences, 7,288 triangles.
+- Imported idle: 344 frames, ~5.7167 seconds. Imported Slow Run remains 44 frames, ~0.7167 seconds.
+- Simulated the weighted Ash mesh through idle -> run blend -> jump -> run -> idle without invalid bounds or skin explosions.
+- Release ZIP and repo-ready ZIP integrity checks pass.
+
+## 2.8.43 - 2026-08-09
+
+### Added
+- Added **Ash Ketchum** to the Skin Selector from the supplied `Slow Run.fbx` package.
+- Preserved the FBX's exact weighted Mixamo skin instead of procedurally re-rigging Ash.
+- Added support for a character-specific **embedded animation clip** and wired Ash to the supplied looping Slow Run animation.
+- The source run contains **44 synchronized keys at 60 Hz** over about **0.7167 seconds**; root X/Z locomotion is removed so Gen1Recomp remains responsible for world movement while the original body motion is retained.
+- Built a three-texture Ash atlas from the supplied body, arms/hat/hair, and face textures.
+
+### Validation
+- Ash conversion produced 52 deform bones, 3,819 skinned positions, 9,124 influences, and 7,288 triangles.
+- Both release and repo-ready ZIPs passed integrity checks.
+
+## 2.8.42 - 2026-08-08
+
+### Fixed
+- Retuned **Beelstarmon's leg animation** so the knees now articulate much more clearly instead of reading as straight, rigid stilts.
+- Shifted more motion into the **shin/knee segment** while reducing raw thigh swing, which gives the legs a more readable knee break and a more planted foot roll.
+- Updated Beelstarmon's **jump leg pose** to preserve visible knee flex instead of snapping toward a straight lower leg.
+
+### Validation
+- Release ZIP and repo-ready ZIP both passed integrity checks.
+
+## 2.8.41 - 2026-08-08
+
+### Rebuilt Beelstarmon cloth
+- Rebuilt Beelstarmon's cape/coat deformation instead of only increasing the old three-bone flap angles.
+- Expanded the actual cloth skinning region down to the ground-length tails and farther out to both sides.
+- Preserved the original 31 bone indices and **appended six new cloth bones** (`CapeLTop/Mid/Tip`, `CapeRTop/Mid/Tip`) so existing body skinning cannot shift.
+- The cloth rig now has three independent deformation chains: center, left tail, and right tail.
+- Replaced the gait-sine-only cape motion with a **stateful spring/damping simulation** driven by movement speed, acceleration, gait sway, and stopping inertia.
+- Jumping layers an additional cloth impulse on top of the live spring state instead of replacing it with a rigid canned pose.
+
+### Validation
+- Beelstarmon rig: 31 -> 37 bones, with the six new bones appended after all previous indices.
+- Cape-influenced positions: 4,556 -> 6,072.
+- Cape skin influences: 6,426 -> 9,990.
+- Python converter syntax, manifest JSON, and both ZIP integrity checks pass.
+
+## 2.8.40 - 2026-08-08
+
+### Improved
+- Added a stronger three-stage **cape cloth simulation** for Beelstarmon, with distinct top/mid/bottom lag, rearward trail, and lateral sway while moving.
+- Retuned Beelstarmon's **jump cape response** so the cape opens farther and follows through more clearly on takeoff and landing.
+- Simulated the cape chain before packaging to tune the top/mid/bottom response progressively instead of using nearly-uniform flap values.
+
+### Validation
+- Release ZIP and repo-ready ZIP both passed integrity checks.
+
+## 2.8.39 - 2026-08-08
+
+### Fixed
+- Fixed **Beelstarmon sinking into the ground while jumping**. Her jump pose no longer applies the stock downward Waist/Hips translations on top of the actual world-space jump. Jump compression now comes from the arms and legs instead of moving the entire body below the floor.
+- Added dedicated Beelstarmon jump transforms for arms, forearms, hands, thighs, knees, feet, and toes using her world-aligned procedural rig axes.
+
+### Improved
+- Strengthened **Beelstarmon hair physics**. HairRoot now follows the head with a small delayed translation/rotation, while HairTip uses a larger delayed swing.
+- Hair also receives a stronger takeoff/landing recoil during jumps so the long hair visibly trails the body.
+
+### Validation
+- Preserved the intact 31-bone v2.8.38 skinning layout.
+- Release ZIP and repo-ready ZIP both passed integrity checks.
+
+## 2.8.38 - 2026-08-08
+
+### Fixed
+- Reverted the unsafe v2.8.37 Beelstarmon skeleton insertion that shifted existing skin-weight bone indices and caused the mesh to collapse/explode.
+- Restored the intact **31-bone v2.8.36 Beelstarmon armature and vertex weights**.
+- Retuned Beelstarmon's legs using the existing thigh/knee/foot/toe bones only: smaller hip arcs, smoother knee bend, gentler ankle roll, and less toe exaggeration so the long coat stays stable.
+- Preserved Beelstarmon's corrected facing, chest secondary motion, hair motion, and cape/cloth motion from v2.8.36.
+
+### Validation
+- Beelstarmon model reports 31 bones and all skin influence indices remain within 3..31.
+- Release ZIP and repo-ready ZIP both passed integrity checks.
+
+## 2.8.36 - 2026-08-08
+
+### Fixed Beelstarmon
+- Corrected Beelstarmon's facing by applying a 180-degree model yaw offset so her forward travel matches the direction the character model is looking.
+- Moved the secondary chest weighting upward onto the actual bust instead of the upper abdomen. The new chest region averages around Y=1.67 and uses a tighter front-surface falloff.
+- Reweighted the hand, elbow, knee, shin, foot and toe regions so the limb joints bend more cleanly and planted feet stay more stable during walking.
+- Retuned Beelstarmon's walk with softer shoulders, more natural elbow flex, wrist follow-through and a cleaner knee/foot cycle.
+
+### Added secondary motion
+- Added a two-bone hair chain (`HairRoot` / `HairTip`) for delayed head/hair follow-through while moving and jumping.
+- Added a three-bone cape/cloth chain (`CapeTop` / `CapeMid` / `CapeBottom`) with progressively stronger lag toward the bottom of the cloth.
+- Preserved the requested exaggerated 5x chest secondary-motion effect, now localized to the correct chest vertices.
+
+### Validation
+- Beelstarmon procedural rig increased from 26 to 31 bones.
+- Chest influences now target the upper/front chest; hair and cape regions have dedicated weighted bones.
+- Release ZIP and repo-ready ZIP integrity checks passed.
+
+## 2.8.35 - 2026-08-08
+
+### Added Beelstarmon
+- Added **Beelstarmon** as a ninth Skin Selector character from the supplied `digimon.fbx` and texture.
+- The FBX is a static mesh (no embedded armature/deformers), so the converter now builds a **26-bone procedural humanoid rig** with hips, spine, head, arms, hands, legs, feet, toes, plus dedicated left/right chest secondary-motion bones.
+- Added a dedicated `BEELSTARMON` movement profile for full-body walking/jogging animation.
+- Added intentionally exaggerated **5x chest secondary motion** during movement and jumping, with separate weighted chest bones rather than deforming the entire torso.
+- Added `tools/convert_beelstarmon_fbx.py` and preserved the original FBX/texture under `source/beelstarmon/`.
+
+### Validation
+- Converter Python syntax check passes.
+- Generated model contains 17,130 positions and 23,715 triangles.
+- Release ZIP and repo-ready ZIP integrity checks pass.
+
+## 2.8.34 - 2026-08-08
+
+### Fixed
+- Re-solved **Naruto's ninja-run arm rig** after the rear-view test showed his fingers collapsing into the torso/pelvis.
+- Naruto's hands now target positions outside the body, nearly shoulder-height, and well behind the hips instead of following the centerline down through his back.
+- Reduced secondary sway to keep the straight-back arm silhouette stable while running.
+- Preserved Red's current light-jog animation unchanged.
+
+### Validation
+- Solved against Naruto's runtime SMD bind matrices: simulated shoulders remain near X ±8 / Y 94.5 / Z -8 while hands land near X ±20 / Y 94.4 / Z -37.
+- Release ZIP and repo-ready ZIP integrity checks pass.
+
+## 2.8.33 - 2026-08-08
+
+### Fixed
+- Fixed **Naruto's disappearing ninja-run arms**. v2.8.32 used a large shoulder roll that folded the arm chains through/behind the torso.
+- Re-solved Naruto's shoulder pose against the actual SMD bind hierarchy. The first arm bones now rotate primarily around their local X axes, placing both hands behind the hips with the arms visible and nearly horizontal.
+- Kept the elbows almost straight with only tiny step-synchronous drift so the classic arms-back pose remains readable while moving.
+- Preserved Red's v2.8.32 light-jog tuning unchanged.
+
+### Validation
+- Verified the bind-chain positions after the new shoulder transforms: both hands sit behind the torso at approximately the same height and remain separated from the body centerline.
+- Release ZIP and repo-ready ZIP both pass integrity checks.
+
+## 2.8.32 - 2026-08-08
+
+### Improved
+- Retuned **Red's light jog** after armature simulation. The jog keeps the v2.8.31 feel, but the arms now move a little less, keep a softer bend, and have a smaller wrist/forearm follow-through for a more natural human swing.
+- Retuned **Naruto's ninja run** after armature simulation. Naruto now leans farther forward and holds both arms much straighter and more level behind himself in a classic ninja-run silhouette.
+
+### Validation
+- Simulated both Red and Naruto against their current runtime armatures before tuning the motion.
+- Release ZIP and repo-ready ZIP both passed integrity checks.
+
+## 2.8.31 - 2026-08-08
+
+### Red light jog
+- Rebuilt Red's moving animation as a **light jog** instead of the previous heavy walk/T-pose-prone hybrid.
+- Expanded Red's runtime armature map to expose `Spine2`, `Spine3`, `Neck`, `Head`, both shoulders, both hands, and both toe bones so the full skeleton can participate in the animation.
+- Tuned a restrained jog cadence, moderate stride, bent-elbow arm pump, subtle wrist follow-through, small torso lean, and controlled vertical bounce.
+- Red's distance-locked animation cycle is now 34 world pixels per cycle, faster than the prior 42-pixel walking cadence while remaining lighter than a sprint.
+
+### Naruto ninja run
+- Rebuilt Naruto's moving upper-body pose against the **actual SMD armature** instead of stacking generic arm-axis rotations.
+- Solved shoulder/upper-arm/forearm rotations so both hands sit **behind the hips** in the classic ninja-run silhouette.
+- Added a stronger forward torso lean, flatter head motion, quick leg cycle, and only subtle arm sway so the arms remain swept backward while running.
+
+### Simulation validation
+- Simulated both armatures at four phases of a full movement cycle in front and side views before packaging.
+- Red's simulated hands stay beside the torso with alternating fore/aft pump instead of returning to a T-pose.
+- Naruto's simulated hands remain behind the body through the complete cycle while the legs alternate normally.
+- Release ZIP and repo-ready ZIP integrity checks pass.
+
+## 2.8.30 - 2026-08-08
+
+### Fixed
+- Corrected **Red's arm pose**. The previous v2.8.29 Red arm branch dropped the normal arm-down rest rotation, which let his bind-pose T-arms show through while moving. Red now keeps a proper arm-down rest orientation and layers the looser walk swing on top.
+
+### Added
+- Added a dedicated **Naruto ninja-run** moving profile. Naruto now leans forward more aggressively, keeps a flatter torso trajectory, and sweeps both arms backward in the classic ninja-run silhouette while moving.
+
+### Validation
+- Release ZIP and repo-ready ZIP both passed integrity checks after the Red arm fix and Naruto ninja-run update.
+
+## 2.8.29 - 2026-08-08
+
+### Improved Red arm motion
+- Reworked Red's fast-walk arm animation to remove the stiff **C-3PO-like** look.
+- Added a dedicated Red shoulder/upper-arm/forearm/hand path with softer shoulder motion, smaller upper-arm swing, a permanent natural elbow bend, and delayed forearm/wrist follow-through.
+- Kept the v2.8.28 grounded GTA-IV-style walk cadence and leg motion intact.
+
+### Validation
+- Release ZIP and repo-ready ZIP passed integrity checks.
+
+## 2.8.28 - 2026-08-08
+
+### Improved Red movement
+- Reworked Red's fast movement animation into a **grounded, weighty GTA-IV-style walk** instead of a jog. Gameplay/root movement speed is unchanged.
+- Increased Red's gait cycle distance from 30 to **42 world pixels per cycle**, giving each foot more time on the ground and a slower, heavier step cadence while the character still travels quickly.
+- Reduced knee lift, ankle/toe kick, arm pump, forward lean, and vertical bounce.
+- Increased pelvis/shoulder counter-sway and kept a long forward leg reach so the walk feels loose and human rather than robotic or floaty.
+- Changes are isolated to Red and preserve the existing size, true-directional facing, Shrek fixes, and CJ safety changes.
+
+### Validation
+- Release ZIP and repo-ready ZIP integrity checks pass.
+
+## 2.8.27 - 2026-08-08
+
+### Fixed
+- Reduced **Red's vertical run bob** so the whole hip/leg chain no longer lifts visibly above the ground during each stride.
+- Added Red-specific waist and hip bob damping while preserving the longer arm/leg stride introduced in v2.8.26.
+- Reduced Red head bob slightly so the run feels planted rather than buoyant.
+
+### Validation
+- Release ZIP and repo-ready ZIP both passed integrity checks.
+
+## 2.8.26 - 2026-08-08
+
+### Improved
+- Increased **Red's running stride** so both his legs and arms take longer, clearer reaches while moving.
+- Boosted Red-specific thigh, knee, foot, toe, arm, elbow, and wrist swing amounts for a more athletic run silhouette.
+- Added a bit more Red-only torso lean, bob, and counter-rotation to support the larger stride without changing gameplay speed.
+
+### Validation
+- Packaged release ZIP and repo-ready ZIP both passed integrity checks.
+
+## 2.8.25 - 2026-08-08
+
+### Red
+- Scaled **Red back up by 25% from v2.8.24**, changing his render height from `15.1875` to `18.984375`.
+- Added a dedicated **RED animation profile** so Red can be tuned without changing the other selectable characters.
+- Improved Red's running gait with a longer stride, slightly stronger knee lift and toe-off, stronger opposite-arm pump, more readable torso counter-rotation, and a little more forward athletic lean.
+- Dampened excess head movement so the faster gait reads cleaner instead of looking bouncy.
+- Movement speed and collision behavior are unchanged; this update changes model scale and animation presentation only.
+
+### Validation
+- Release ZIP and repo-ready ZIP both passed integrity checks.
+
+## 2.8.24 - 2026-08-08
+
+### Changed
+- Scaled **Red down another 25% from his v2.8.23 size**. His render height is now `15.1875` instead of `20.25` (56.25% of the original `27` height).
+- No other character scales were changed.
+
+## 2.8.23 - 2026-08-08
+
+### Changed
+- Scaled **Red** down by exactly **25%** in the 3D Character Selector. Red's runtime render height is now `20.25` instead of `27`.
+- No other character scales or animation settings were changed.
+
+### Validation
+- Release ZIP and repo-ready ZIP both passed integrity checks.
+
+## 2.8.22 - 2026-08-08
+
+### Fixed CJ shooting crash
+- Removed the **live Dramatic Shape terrain Mesh fracture path** from CJ's trigger flow completely. v2.8.21 still called `captureTerrainBlockDebris()` on world hits despite the intended safety change.
+- Removed CJ's incremental terrain-fracture **prewarm** from `Player:update`, so simply aiming/firing no longer reads terrain vertex maps.
+- Wrapped the complete `fireCJShot()` invocation in `pcall`; Lua-side shot errors are now logged and safely aborted instead of escaping through the gamepad callback.
+- Replaced trigger-time MP3 decoding with a cached procedural pistol crack to avoid native audio-decoder failures that Lua `pcall` cannot reliably contain.
+- World hits now use a stability-first impact-only path: recoil, raycast and HUD feedback remain, but gunshots do not mutate Dramatic Shape terrain meshes or map blocks. Actor hit behavior remains available.
+- Preserved v2.8.20 true 360-degree movement and all current Shrek fixes.
+
+### Validation
+- Confirmed the CJ trigger handler no longer calls `captureTerrainBlockDebris()` or `red3dPrewarmFracture`.
+- Release and repo-ready ZIP integrity checks pass.
+
+## 2.8.21 - 2026-08-08
+
+### Fixed
+- Fixed a **CJ shooting crash** by disabling the experimental live terrain `Mesh:setVertexMap` fracture path by default. That mutation can hard-fail on some Gen1Recomp/Dramatic Shape/LÖVE combinations when a bullet hits world geometry.
+- CJ now uses the safer fallback debris path for destructible world hits while keeping gun audio, recoil, actors, hit detection, and block destruction.
+- Wrapped CJ shot execution, debris creation, and world-block destruction in protected calls so a failed effect is logged instead of crashing the game.
+- Preserved the v2.8.20 true 360-degree directional-facing changes and all current Shrek fixes.
+
+## 2.8.20 - 2026-08-08
+
+### Fixed
+- Rebuilt **True Directional Movement** around the player model's actual world-space displacement instead of Dramatic Shape's live `bodyYaw` / input-vector exposure.
+- The 3D character can now face a **continuous 360-degree travel direction**: forward, backward, sideways, and every diagonal angle in between.
+- When movement stops, the model **keeps its last exact yaw** while the camera orbits independently instead of snapping back to camera-forward.
+- The displacement tracker ignores large warp/teleport jumps and preserves CJ's ADS body-facing override.
+- Preserved the Shrek texture, body, walk, and arm fixes from v2.8.13-v2.8.18.
+
+### Validation
+- Direction calculations were simulated for cardinal and diagonal world-space trajectories.
+- Release ZIP and repo-ready ZIP integrity checks passed.
+
+## 2.8.19 - 2026-08-08
+
+### Fixed
+- Restored **True Directional Movement** for all 3D player skins. The previous implementation still trusted Dramatic Shape's live `bodyYaw`, which intentionally returns to camera-forward while standing.
+- The Character Selector now derives the model's continuous **360-degree body yaw directly from the actual movement vector transformed into world space**.
+- Releasing movement now preserves the last travel bearing while the camera orbits independently, so the character no longer snaps back to camera-forward.
+- Added a compatibility fallback that reconstructs the world movement vector from `moveVector` + camera `yaw` when `moveWorld` is unavailable.
+- CJ ADS still overrides the retained body bearing while aiming.
+- Preserved the v2.8.18 Shrek arm fixes and all previous Shrek rig/texture corrections.
+
+### Validation
+- Simulated camera-relative forward, backward, left, right, and diagonal movement bearings plus stop-and-orbit retention.
+- Release ZIP and repo-ready ZIP integrity checks passed.
+
+## 2.8.18 - 2026-08-08
+
+### Fixed
+- Reworked **Shrek's arms** in the `SHREK_RED` profile. The previous pass copied Red's timing but still left the upper arms too spread and the forearms too stiff for Shrek's generated bind pose.
+- Added a dedicated **inward upper-arm rest rotation** and a milder Red-style swing so Shrek's hands stay beside his torso instead of winging outward.
+- Added matching **forearm and hand rest angles** plus dedicated `SHREK_RED` jump-arm branches so the same correction applies while jumping, not just walking.
+- Preserved the v2.8.17 leg/body walk-axis fix and the v2.8.13 Shrek texture correction.
+
+### Validation
+- Release ZIP and repo-ready ZIP both passed integrity checks after the Shrek arm-profile update.
+
+## 2.8.17 - 2026-08-08
+
+### Fixed
+- Rebuilt **Shrek's walk mapping after simulating his actual 24-bone bind skeleton**. The v2.8.16 Red-style path was using Red's local-Y leg axes on Shrek's world-aligned generated rig, twisting his thighs/knees sideways and producing the crippled walk.
+- Shrek now keeps **Red's gait timing**, but maps thighs, knees, feet, arms, elbows, torso lean, hips and head onto the axes that match Shrek's generated skeleton.
+- Reduced Shrek stride and knee amplitudes to fit his shorter, wider proportions while keeping an alternating Red-like walk.
+- Removed an erroneous SHREK_RED block from the jump function that referenced walk-only variables; Shrek jump now uses the correct rig-axis path as well.
+
+### Validation
+- Simulated the full Shrek joint hierarchy across a complete 12-pose gait cycle before packaging.
+- Release ZIP and repo-ready ZIP integrity checks passed.
+
+## 2.8.16 - 2026-08-08
+
+### Changed
+- Extended Shrek's Red-style animation from just the arms to his **whole body**. Shrek now gets Red-like hips, waist bob, torso twist/lean, shoulders, head counter-motion, legs, and arm swing through a dedicated `SHREK_RED` profile.
+- The torso/head motion is slightly damped compared with Red so Shrek keeps his heavier proportions instead of looking too springy.
+- Preserved Shrek's corrected textures and existing rig.
+
+### Validation
+- Release and repo-ready ZIP integrity checks passed.
+
+## 2.8.15 - 2026-08-08
+
+### Fixed
+- Switched **Shrek** from the shared `GENERIC` profile to the same **default/Red-style arm and walk animation path** used by the Pokémon trainer Red. This gives Shrek the same baseline upper-arm, forearm, and hand animation behavior as Red instead of the looser generic profile.
+- Tuned Shrek to use **`armRestDeg=36`** so his already-relaxed source arms settle into a more Red-like hanging pose without being pushed behind the torso.
+- Preserved the v2.8.13 Shrek texture fix and the existing Shrek rig/atlas assets.
+
+### Validation
+- Release ZIP and repo-ready ZIP both passed integrity checks after the Shrek animation-profile change.
+
+## 2.8.14 - 2026-08-08
+
+### Fixed
+- Corrected **Shrek's arm rest pose**. The previous `armRestDeg=72` was over-rotating his already-down source arms behind his torso, which is why they looked pinned behind his back in-game.
+- Shrek now uses **`armRestDeg=0`** so the shared animation system starts from his original relaxed source arm pose instead of applying an extra downward/backward drop.
+- Preserved the v2.8.13 Shrek texture UV fix and atlas content unchanged.
+
+### Validation
+- Packaged release ZIP and repo-ready ZIP both passed integrity checks.
+
+## 2.8.13 - 2026-08-08
+
+### Fixed
+- Corrected **Shrek's diffuse UV vertical mapping**. The extracted OBJ stores V in `-1..0`; the previous converter used `1 + v`, which vertically flipped every texture island. The correct conversion is `-v`.
+- This fixes the visibly wrong shirt, vest, skin, pants, and face texture placement seen in-game.
+- Kept the v2.8.12 Shrek arm-drop rig and alpha-bleed atlas padding.
+
+### Validation
+- Rendered the original Shrek OBJ with both UV formulas. The old `1 + v` mapping reproduces the broken texture placement; `-v` reconstructs the expected Shrek appearance.
+- Regenerated `data/shrek_model.lua` and the runtime atlas, then passed ZIP integrity checks.
+
+## 2.8.12 - 2026-08-08
+
+### Fixed
+- Reworked **Shrek** again. His source mesh is posed with the arms spread wide, so using the generic `armRestDeg=0` left him looking unrigged at runtime. Shrek now uses a **72-degree arm-drop rest pose** in the shared animation system so his arms hang down instead of staying stuck out sideways.
+- Rebuilt **Shrek's atlas with alpha-bleed padding** around the diffuse islands. This prevents the transparent black background in the source body/head textures from bleeding into the sleeves and hands when the model is minified in-game.
+- Regenerated `data/shrek_model.lua` and `assets/shrek_atlas.png` from the updated converter while keeping the same original Shrek source OBJ and textures.
+
+### Validation
+- Package integrity passed after regenerating the Shrek model and atlas.
+- Shrek remains selectable in Skin Selector and keeps the same source asset set.
+
+## 2.8.11 - 2026-08-08
+
+### Fixed Shrek
+- Corrected Shrek's texture UV conversion. The extracted OBJ stores V coordinates in the range `-1..0`; v2.8.10 clamped those values to zero, which collapsed almost the whole mesh onto a single horizontal row of the diffuse textures. The converter now maps the source negative-V convention correctly across the full atlas.
+- Rebuilt Shrek's procedural skin weights so the complete sleeves/upper arms are attached to the armature. The old `abs(x) > 0.43` cutoff left inner upper-arm vertices stuck to the torso.
+- Arm weights now follow a shoulder -> upper arm -> forearm -> hand polyline with smooth joint blending and rigid palm/finger weighting.
+- Preserved the original supplied Shrek body/head diffuse textures and the existing Skin Selector/save/directional-facing behavior.
+
+### Validation
+- Runtime UVs now span approximately `0.002..0.997` horizontally and `0.004..0.998` vertically instead of collapsing to one texture row.
+- 1,725 Shrek positions are arm-weighted; 1,586 of them move more than 0.02 model units in the simulated arm-swing pose.
+- Simulated arm deformation reaches ~0.148 model units while non-arm torso vertices remain stationary in the focused arm test.
+- Release ZIP integrity checks pass.
+
+## 2.8.10 - 2026-08-08
+
+### Added
+- Added **Shrek** to Skin Selector.
+- Imported the supplied *Shrek Forever After* PC OBJ and original diffuse textures.
+- Built a new 24-bone procedural humanoid skin rig around Shrek's supplied rest pose, with weighted arms/legs, torso, neck, and head for the selector's walking/jump/battle animation system.
+- Added `data/shrek_model.lua`, `assets/shrek_atlas.png`, the original source files under `source/shrek/`, and `tools/convert_shrek_obj.py`.
+
+### Validation
+- The generated Shrek mesh contains 4,933 weighted positions and 8,502 triangles.
+- Bind-pose weighted reconstruction is exact within floating-point tolerance because every generated influence is stored in its bone-local bind coordinates.
+- The release remains configured for `randyadr/Gen1Recomp-Character-Selector` GitHub auto-updates.
+
 ## 2.8.9 - 2026-08-08
 
 ### 360-degree persistent body facing

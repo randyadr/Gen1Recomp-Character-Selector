@@ -172,6 +172,14 @@ local CONFIG = {
   startBlendRate = 10.0,
   stopBlendRate = 6.8,
   seamGrace = 0.12,
+
+  -- BelleStarmon analog locomotion. A light analog tilt stays on the supplied
+  -- catwalk clip; the upper half of the stick travel crossfades into Fast Run.
+  belleWalkCyclePixels = 72.0,
+  belleRunCyclePixels = 31.0,
+  belleRunBlendStart = 0.55,
+  belleRunBlendFull = 0.92,
+  belleRunBlendRate = 7.5,
 }
 
 function Renderer.new(mod,data,characterDef)
@@ -181,6 +189,8 @@ function Renderer.new(mod,data,characterDef)
     characterId=characterDef.id or "RED",
     characterLabel=characterDef.label or characterDef.id or "RED",
     atlasPath=characterDef.atlas or "assets/red_atlas.png",
+    atlasFrames=characterDef.atlasFrames or nil,
+    dynamicAtlasMode=characterDef.dynamicAtlas or nil,
     modelYawOffset=characterDef.modelYawOffset or CONFIG.modelYawOffset,
     renderHeight=characterDef.height or CONFIG.height,
     animationProfile=characterDef.profile or "RED",
@@ -191,12 +201,22 @@ function Renderer.new(mod,data,characterDef)
     voxelGaitDistance=0,voxelLastTime=nil,voxelLastMovingTime=nil,
     voxelLastSpeed=60,voxelSmoothSpeed=0,voxelMoveBlend=0,
     voxelWasMoving=false,motionMeasuredSpeed=nil,
+    beelCloth=nil,beelClothSpeed=0,beelClothLastTime=nil,
+    ashIdleTime=0,ashIdleLastTime=nil,
+    beelIdleTime=0,beelIdleLastTime=nil,
+    aangIdleTime=0,aangIdleLastTime=nil,
+    cjIdleTime=0,cjIdleLastTime=nil,
+    yamiIdleTime=0,yamiIdleLastTime=nil,
+    belleRunBlend=0,belleGaitPhase=0,
+    postSkinZUp=characterDef.postSkinZUp==true,
   },Renderer)
   -- model.lua only exposes a small animation-bone subset.  Extend it at
   -- runtime from the generated bone names so wrists/fingers can animate too.
   data.animBone=data.animBone or {}
   data.runtimeProfile=self.animationProfile
+  data.runtimeCharacterId=self.characterId
   data.runtimeArmRest=self.armRestDeg
+  if self.characterId=="BELLESTARMON" then data.runtimeBelleRunBlend=0 end
   for i,name in ipairs(data.boneName or {}) do
     if data.animBone[name]==nil then data.animBone[name]=i end
   end
@@ -206,19 +226,43 @@ function Renderer.new(mod,data,characterDef)
     self.world[i]={}; self.localWork[i]={}
   end
   self.sx={}; self.sy={}; self.sz={}; self.screenX={}; self.screenY={}
-  self.vertexRows={}; self.voxelRows={}; self.maps={}
+
+  -- Lossless render-vertex compaction. Generated models often contain one
+  -- corner vertex for every triangle corner even when many corners reference
+  -- the exact same skinned position and UV. Updating those duplicates every
+  -- frame is especially expensive on large imports (Yami was 147k corners).
+  -- Build one render vertex for each unique position+UV tuple and use indexed
+  -- triangle maps. Geometry, UVs and triangle order remain unchanged.
+  self.vertexRows={}; self.voxelRows={}; self.vertexPos={};
+  self.cornerVertex={}; self.baseMap={}; self.maps={}
+  local compactLookup={}
   for i=1,data.cornerCount do
-    self.vertexRows[i]={0,0,data.cornerU[i],data.cornerV[i],1,1,1,1}
-    self.voxelRows[i]={0,0,0,data.cornerU[i],data.cornerV[i],1.0}
+    local pos=data.cornerPos[i]
+    local u,v=data.cornerU[i],data.cornerV[i]
+    local byPos=compactLookup[pos]
+    if not byPos then byPos={}; compactLookup[pos]=byPos end
+    local byU=byPos[u]
+    if not byU then byU={}; byPos[u]=byU end
+    local vi=byU[v]
+    if not vi then
+      vi=#self.vertexRows+1
+      byU[v]=vi
+      self.vertexPos[vi]=pos
+      self.vertexRows[vi]={0,0,u,v,1,1,1,1}
+      self.voxelRows[vi]={0,0,0,u,v,1.0}
+    end
+    self.cornerVertex[i]=vi
+    self.baseMap[i]=vi
   end
+  self.renderVertexCount=#self.vertexRows
   for facing,order in pairs(data.order) do
     local map={}
     local n=0
     for i=1,#order do
       local b=(order[i]-1)*3
-      n=n+1; map[n]=b+1
-      n=n+1; map[n]=b+2
-      n=n+1; map[n]=b+3
+      n=n+1; map[n]=self.cornerVertex[b+1]
+      n=n+1; map[n]=self.cornerVertex[b+2]
+      n=n+1; map[n]=self.cornerVertex[b+3]
     end
     self.maps[facing]=map
   end
@@ -233,37 +277,68 @@ function Renderer.new(mod,data,characterDef)
   return self
 end
 
-function Renderer:ensureImage()
-  if self.image then return true end
-  if self.failed then return false end
-  if not (love and love.graphics and love.graphics.newImage) then return false end
+local function runtimeClock()
+  if love and love.timer and love.timer.getTime then return love.timer.getTime() end
+  return os.clock()
+end
 
-  local bytes=self.mod:read(self.atlasPath)
+function Renderer:atlasFramePath()
+  if type(self.atlasFrames)~="table" or #self.atlasFrames==0 then
+    return self.atlasPath
+  end
+  if self.dynamicAtlasMode=="blink" then
+    local phase=runtimeClock()%4.2
+    if (phase>=3.62 and phase<3.69) or (phase>=3.78 and phase<3.84) then
+      return self.atlasFrames[2] or self.atlasFrames[1]
+    end
+  end
+  return self.atlasFrames[1]
+end
+
+function Renderer:loadAtlasImage(path)
+  self.imageCache=self.imageCache or {}
+  if self.imageCache[path] then return self.imageCache[path] end
+  if not (love and love.graphics and love.graphics.newImage) then return nil end
+
+  local bytes=self.mod:read(path)
   if not bytes then
-    self.mod.log:error("%s is missing for character %s -- reinstall the complete mod", tostring(self.atlasPath), tostring(self.characterLabel))
-    self.failed=true
-    return false
+    self.mod.log:error("%s is missing for character %s -- reinstall the complete mod", tostring(path), tostring(self.characterLabel))
+    return nil
   end
   local ok,img=pcall(function()
     if love.filesystem and love.filesystem.newFileData then
-      local fd=love.filesystem.newFileData(bytes,self.characterId .. "_atlas.png")
+      local fd=love.filesystem.newFileData(bytes,self.characterId .. "_" .. path:gsub("[^%w]+","_") .. ".png")
       return love.graphics.newImage(fd)
     end
-    return love.graphics.newImage((self.mod.path or "") .. "/" .. self.atlasPath)
+    return love.graphics.newImage((self.mod.path or "") .. "/" .. path)
   end)
   if not ok or not img then
-    self.mod.log:error("could not create %s 3D texture atlas: %s",tostring(self.characterLabel),tostring(img))
-    self.failed=true
-    return false
+    self.mod.log:error("could not create %s 3D texture atlas %s: %s",tostring(self.characterLabel),tostring(path),tostring(img))
+    return nil
   end
   if img.setFilter then img:setFilter("linear","linear") end
   if img.setWrap then img:setWrap("clamp","clamp") end
+  self.imageCache[path]=img
+  return img
+end
+
+function Renderer:ensureImage()
+  if self.failed then return false end
+  local path=self:atlasFramePath()
+  if self.image and self.currentAtlasPath==path then return true end
+  local img=self:loadAtlasImage(path)
+  if not img then
+    self.failed=true
+    return false
+  end
   self.image=img
+  self.currentAtlasPath=path
+  if self.mesh and self.mesh.setTexture then self.mesh:setTexture(img) end
   return true
 end
 
 function Renderer:ensureGraphics()
-  if self.mesh then return true end
+  if self.mesh then return self:ensureImage() end
   if not self:ensureImage() then return false end
   if not (love and love.graphics and love.graphics.newMesh) then return false end
 
@@ -298,6 +373,9 @@ function Renderer:ensureVoxelGraphics(Voxel3D)
   end
   self.voxelMesh=mesh
   self.voxelFormat=Voxel3D.FORMAT
+  -- Preserve the original triangle sequence while drawing the compacted
+  -- vertex buffer. Dramatic Shape still receives exactly the same triangles.
+  if mesh.setVertexMap then pcall(mesh.setVertexMap,mesh,self.baseMap) end
   self.voxelUploadedKey=nil
   return true
 end
@@ -511,16 +589,496 @@ local function shootBoneDelta(data,bone,t)
   return nil
 end
 
+
+local function sampleEmbeddedClip(clip,n,bone,phase)
+  if not clip or not n or n<2 then return nil end
+  phase=wrap01(phase or 0)
+  -- Mixamo clips include a duplicate closing key. Sample n-1 intervals so
+  -- wrapping from 1 -> 0 is seamless rather than pausing on the last frame.
+  local u=phase*(n-1)
+  local f0=math.floor(u)
+  if f0>=n-1 then f0=n-2; u=n-1 end
+  local f1=f0+1
+  local a=u-f0
+  local out={}
+  local b0=((bone-1)*n+f0)*16
+  local b1=((bone-1)*n+f1)*16
+  for k=1,16 do
+    local x0=clip[b0+k]
+    local x1=clip[b1+k]
+    out[k]=x0+(x1-x0)*a
+  end
+  return out
+end
+
+local function blend16(a,b,t)
+  if not a then return b end
+  if not b then return a end
+  if t<=0 then return a end
+  if t>=1 then return b end
+  local out={}
+  for k=1,16 do out[k]=a[k]+(b[k]-a[k])*t end
+  return out
+end
+
+local function ashIdleDelta(data,bone)
+  if data.idleDelta and data.idleFrameCount and data.idleFrameCount>1 then
+    return sampleEmbeddedClip(data.idleDelta,data.idleFrameCount,bone,data.runtimeAshIdlePhase or 0)
+  end
+  local idle=data.runIdleDelta
+  if not idle then return nil end
+  local out={}; local base=(bone-1)*16
+  for k=1,16 do out[k]=idle[base+k] end
+  return out
+end
+
+local function ashEmbeddedDelta(data,bone,phase,blend)
+  local run=sampleEmbeddedClip(data.runDelta,data.runFrameCount,bone,phase)
+  local idle=ashIdleDelta(data,bone)
+  if not run then return idle end
+  blend=blend or 0
+  if blend<0 then blend=0 elseif blend>1 then blend=1 end
+  -- Smoothstep gives a soft idle -> run and run -> idle transition instead of
+  -- linearly snapping the Mixamo limbs through the middle of the blend.
+  blend=blend*blend*(3-2*blend)
+  return blend16(idle,run,blend)
+end
+
+local function ashJumpDelta(data,bone,t,phase,motionBlend)
+  local base=ashEmbeddedDelta(data,bone,phase,motionBlend or 0)
+  if not base then return nil end
+  local A=data.animBone or {}
+  local e=math.sin(math.pi*math.max(0,math.min(1,t or 0)))
+  e=e^0.78
+  local add=nil
+  -- Custom Ash jump pose layered over whichever idle/run pose was active at
+  -- takeoff.  The envelope is zero at both ends, so takeoff and landing blend
+  -- back into the imported clips without a visible pose pop.
+  if bone==A.Spine1 then add=rotX(math.rad(-8.0*e))
+  elseif bone==A.Spine2 then add=rotX(math.rad(-4.0*e))
+  elseif bone==A.Spine3 then add=rotX(math.rad(-2.0*e))
+  elseif bone==A.Neck then add=rotX(math.rad(3.0*e))
+  elseif bone==A.Head then add=rotX(math.rad(2.5*e))
+  elseif bone==A.LArm then add=compose3(rotX(math.rad(-7.0*e)),rotY(math.rad(-10.0*e)),rotZ(math.rad(-4.0*e)))
+  elseif bone==A.RArm then add=compose3(rotX(math.rad(-7.0*e)),rotY(math.rad(10.0*e)),rotZ(math.rad(4.0*e)))
+  elseif bone==A.LForeArm then add=rotZ(math.rad(22.0*e))
+  elseif bone==A.RForeArm then add=rotZ(math.rad(-22.0*e))
+  elseif bone==A.LThigh then add=rotX(math.rad(27.0*e))
+  elseif bone==A.RThigh then add=rotX(math.rad(21.0*e))
+  elseif bone==A.LLeg then add=rotX(math.rad(-46.0*e))
+  elseif bone==A.RLeg then add=rotX(math.rad(-54.0*e))
+  elseif bone==A.LFoot then add=rotX(math.rad(12.0*e))
+  elseif bone==A.RFoot then add=rotX(math.rad(15.0*e))
+  elseif bone==A.LToe then add=rotX(math.rad(5.0*e))
+  elseif bone==A.RToe then add=rotX(math.rad(6.0*e))
+  end
+  if add then return compose(base,add) end
+  return base
+end
+
+local function aangIdleDelta(data,bone)
+  if data.idleDelta and data.idleFrameCount and data.idleFrameCount>1 then
+    return sampleEmbeddedClip(data.idleDelta,data.idleFrameCount,bone,data.runtimeAangIdlePhase or 0)
+  end
+  return nil
+end
+
+local function aangEmbeddedDelta(data,bone,phase,blend)
+  local idle=aangIdleDelta(data,bone)
+  local run=sampleEmbeddedClip(data.runDelta,data.runFrameCount,bone,phase)
+  if not run then return idle end
+  blend=blend or 0
+  if blend<0 then blend=0 elseif blend>1 then blend=1 end
+  blend=blend*blend*(3-2*blend)
+  return blend16(idle,run,blend)
+end
+
+local function aangJumpDelta(data,bone,t,phase,motionBlend)
+  local move=motionBlend or 0
+  if move<0 then move=0 elseif move>1 then move=1 end
+  local base=aangEmbeddedDelta(data,bone,phase,move)
+  local jump=sampleEmbeddedClip(data.jumpDelta,data.jumpFrameCount,bone,math.max(0,math.min(1,t or 0)))
+  if not jump then return base end
+  local A=data.animBone or {}
+  local tt=math.max(0,math.min(1,t or 0))
+  local function smooth(x) if x<=0 then return 0 elseif x>=1 then return 1 end return x*x*(3-2*x) end
+  -- Keep some Running locomotion underneath the authored Jump clip so takeoff
+  -- and landing connect to movement instead of snapping into a disconnected pose.
+  local w=math.min(smooth(tt/0.10),smooth((1-tt)/0.18))
+  local carry=0.0
+  if bone==A.Hips then
+    carry=0.56
+  elseif bone==A.LThigh or bone==A.RThigh or bone==A.LLeg or bone==A.RLeg
+      or bone==A.LFoot or bone==A.RFoot or bone==A.LToe or bone==A.RToe then
+    carry=0.42
+  elseif bone==A.Spine1 or bone==A.Spine2 or bone==A.Spine3 then
+    carry=0.14
+  elseif bone==A.LArm or bone==A.RArm or bone==A.LForeArm or bone==A.RForeArm
+      or bone==A.LHand or bone==A.RHand then
+    carry=0.08
+  end
+  return blend16(base,jump,w*(1.0-carry*move))
+end
+
+local function cjIdleDelta(data,bone)
+  if data.idleDelta and data.idleFrameCount and data.idleFrameCount>1 then
+    return sampleEmbeddedClip(data.idleDelta,data.idleFrameCount,bone,data.runtimeCJIdlePhase or 0)
+  end
+  return nil
+end
+
+local function cjEmbeddedDelta(data,bone,phase,blend)
+  local idle=cjIdleDelta(data,bone)
+  local run=sampleEmbeddedClip(data.runDelta,data.runFrameCount,bone,phase)
+  if not run then return idle end
+  blend=blend or 0
+  if blend<0 then blend=0 elseif blend>1 then blend=1 end
+  blend=blend*blend*(3-2*blend)
+  return blend16(idle,run,blend)
+end
+
+local function cjJumpDelta(data,bone,t,phase,motionBlend)
+  local move=motionBlend or 0
+  if move<0 then move=0 elseif move>1 then move=1 end
+  local base=cjEmbeddedDelta(data,bone,phase,move)
+  local jump=sampleEmbeddedClip(data.jumpDelta,data.jumpFrameCount,bone,math.max(0,math.min(1,t or 0)))
+  if not jump then return base end
+  local A=data.animBone or {}
+  local tt=math.max(0,math.min(1,t or 0))
+  local function smooth(x) if x<=0 then return 0 elseif x>=1 then return 1 end return x*x*(3-2*x) end
+  local w=math.min(smooth(tt/0.10),smooth((1-tt)/0.20))
+  local carry=0.0
+  if bone==A.Hips then
+    carry=0.58
+  elseif bone==A.LThigh or bone==A.RThigh or bone==A.LLeg or bone==A.RLeg
+      or bone==A.LFoot or bone==A.RFoot or bone==A.LToe or bone==A.RToe then
+    carry=0.44
+  elseif bone==A.Spine1 or bone==A.Spine2 or bone==A.Spine3 then
+    carry=0.14
+  elseif bone==A.LArm or bone==A.RArm or bone==A.LForeArm or bone==A.RForeArm
+      or bone==A.LHand or bone==A.RHand then
+    carry=0.08
+  end
+  return blend16(base,jump,w*(1.0-carry*move))
+end
+
+local function yamiIdleDelta(data,bone)
+  if data.idleDelta and data.idleFrameCount and data.idleFrameCount>1 then
+    return sampleEmbeddedClip(data.idleDelta,data.idleFrameCount,bone,data.runtimeYamiIdlePhase or 0)
+  end
+  return nil
+end
+
+local function yamiEmbeddedDelta(data,bone,phase,blend)
+  local idle=yamiIdleDelta(data,bone)
+  local run=sampleEmbeddedClip(data.runDelta,data.runFrameCount,bone,phase)
+  if not run then return idle end
+  blend=blend or 0
+  if blend<0 then blend=0 elseif blend>1 then blend=1 end
+  blend=blend*blend*(3-2*blend)
+  return blend16(idle,run,blend)
+end
+
+local function yamiJumpDelta(data,bone,t,phase,motionBlend)
+  local move=motionBlend or 0
+  if move<0 then move=0 elseif move>1 then move=1 end
+  local base=yamiEmbeddedDelta(data,bone,phase,move)
+  local jump=sampleEmbeddedClip(data.jumpDelta,data.jumpFrameCount,bone,math.max(0,math.min(1,t or 0)))
+  if not jump then return base end
+  local A=data.animBone or {}
+  local tt=math.max(0,math.min(1,t or 0))
+  local function smooth(x) if x<=0 then return 0 elseif x>=1 then return 1 end return x*x*(3-2*x) end
+  local w=math.min(smooth(tt/0.10),smooth((1-tt)/0.20))
+  local carry=0.0
+  if bone==A.Hips then
+    carry=0.58
+  elseif bone==A.LThigh or bone==A.RThigh or bone==A.LLeg or bone==A.RLeg
+      or bone==A.LFoot or bone==A.RFoot or bone==A.LToe or bone==A.RToe then
+    carry=0.44
+  elseif bone==A.Spine1 or bone==A.Spine2 or bone==A.Spine3 then
+    carry=0.14
+  elseif bone==A.LArm or bone==A.RArm or bone==A.LForeArm or bone==A.RForeArm
+      or bone==A.LHand or bone==A.RHand then
+    carry=0.08
+  end
+  return blend16(base,jump,w*(1.0-carry*move))
+end
+
+local function belleLocomotionDelta(data,bone,phase,motionBlend)
+  local idle=aangIdleDelta(data,bone)
+  local walk=nil
+  if data.walkDelta and data.walkFrameCount and data.walkFrameCount>1 then
+    walk=sampleEmbeddedClip(data.walkDelta,data.walkFrameCount,bone,phase)
+  end
+  local run=nil
+  if data.runDelta and data.runFrameCount and data.runFrameCount>1 then
+    run=sampleEmbeddedClip(data.runDelta,data.runFrameCount,bone,phase)
+  end
+  local locomotion=walk or run or idle
+  if walk and run then
+    local rb=tonumber(data.runtimeBelleRunBlend) or 0
+    if rb<0 then rb=0 elseif rb>1 then rb=1 end
+    rb=rb*rb*(3-2*rb)
+    locomotion=blend16(walk,run,rb)
+  end
+  local move=motionBlend or 0
+  if move<0 then move=0 elseif move>1 then move=1 end
+  move=move*move*(3-2*move)
+  return blend16(idle,locomotion,move)
+end
+
+local function belleJumpDelta(data,bone,t,phase,motionBlend)
+  local move=motionBlend or 0
+  if move<0 then move=0 elseif move>1 then move=1 end
+  local base=belleLocomotionDelta(data,bone,phase,move)
+  local tt=math.max(0,math.min(1,t or 0))
+  -- BelleStarmon's supplied jump is almost 1.9 seconds long, while the game's
+  -- hop window is much shorter. Sampling the whole source clip made the pose
+  -- race through takeoff/descent and look jittery. Use a narrower authored
+  -- section and a quintic ease so descent/landing progresses more smoothly.
+  local eased=tt*tt*tt*(tt*(tt*6-15)+10)
+  local sourceT=0.10 + 0.72*eased
+  local jump=sampleEmbeddedClip(data.jumpDelta,data.jumpFrameCount,bone,sourceT)
+  if not jump then return base end
+  local A=data.animBone or {}
+  local function smooth(x) if x<=0 then return 0 elseif x>=1 then return 1 end return x*x*(3-2*x) end
+  local w=math.min(smooth(tt/0.14),smooth((1-tt)/0.26))
+  local carry=0.0
+  if bone==A.Hips then
+    carry=0.58
+  elseif bone==A.LThigh or bone==A.RThigh or bone==A.LLeg or bone==A.RLeg
+      or bone==A.LFoot or bone==A.RFoot or bone==A.LToe or bone==A.RToe then
+    carry=0.44
+  elseif bone==A.Spine1 or bone==A.Spine2 or bone==A.Spine3 then
+    carry=0.16
+  elseif bone==A.LArm or bone==A.RArm or bone==A.LForeArm or bone==A.RForeArm
+      or bone==A.LHand or bone==A.RHand then
+    carry=0.10
+  end
+  return blend16(base,jump,w*(1.0-carry*move))
+end
+
+local function beelIdleDelta(data,bone)
+  if data.idleDelta and data.idleFrameCount and data.idleFrameCount>1 then
+    return sampleEmbeddedClip(data.idleDelta,data.idleFrameCount,bone,data.runtimeBeelIdlePhase or 0)
+  end
+  return nil
+end
+
+local function beelEmbeddedDelta(data,bone,phase,blend)
+  local idle=beelIdleDelta(data,bone)
+  local run=sampleEmbeddedClip(data.runDelta,data.runFrameCount,bone,phase)
+  if not run then return idle end
+  blend=blend or 0
+  if blend<0 then blend=0 elseif blend>1 then blend=1 end
+  blend=blend*blend*(3-2*blend)
+  return blend16(idle,run,blend)
+end
+
+local function beelBreastDelta(data,bone,phase,motionBlend,jumpT)
+  local A=data.animBone or {}
+  if bone~=A.LBreast and bone~=A.RBreast then return nil end
+  local side=(bone==A.LBreast) and -1 or 1
+  local move=motionBlend or 0
+  if move<0 then move=0 elseif move>1 then move=1 end
+  local idlePhase=data.runtimeBeelIdlePhase or 0
+  local idleWave=math.sin(idlePhase*math.pi*2)
+  local runWave=math.sin((phase+0.06)*math.pi*4)
+  local follow=math.sin((phase+0.17)*math.pi*4)
+  -- x30 chest secondary motion. This is 1.5x the v2.8.50 x20 response.
+  -- Idle remains restrained relative to running/jumping so the exaggerated effect
+  -- is most visible during locomotion without destabilizing the standing pose.
+  local y=0.021*idleWave*(1-move) + 0.300*runWave*move
+  local z=0.015*idleWave*(1-move) + 0.132*follow*move
+  local x=side*(0.018*follow*move)
+  local pitch=13.2*runWave*move
+  if jumpT then
+    local t=math.max(0,math.min(1,jumpT))
+    local pulse=math.sin(t*math.pi*3.0)*(1.0-t*0.30)
+    y=y+0.384*pulse
+    z=z+0.156*math.sin((t+0.08)*math.pi*3.0)*(1.0-t*0.25)
+    x=x+side*0.024*pulse
+    pitch=pitch+18.0*pulse
+  end
+  return compose(translate16(x,y,z),rotX(math.rad(pitch)))
+end
+
+local function narutoIdleDelta(data,bone)
+  if data.idleDelta and data.idleFrameCount and data.idleFrameCount>1 then
+    return sampleEmbeddedClip(data.idleDelta,data.idleFrameCount,bone,data.runtimeNarutoIdlePhase or 0)
+  end
+  return nil
+end
+
+local function narutoEmbeddedDelta(data,bone,phase,blend)
+  local idle=narutoIdleDelta(data,bone)
+  local run=sampleEmbeddedClip(data.runDelta,data.runFrameCount,bone,phase)
+  if not run then return idle end
+  blend=blend or 0
+  if blend<0 then blend=0 elseif blend>1 then blend=1 end
+  blend=blend*blend*(3-2*blend)
+  return blend16(idle,run,blend)
+end
+
+local function narutoJumpDelta(data,bone,t,phase,motionBlend)
+  local move=motionBlend or 0
+  if move<0 then move=0 elseif move>1 then move=1 end
+  local base=narutoEmbeddedDelta(data,bone,phase,move)
+  local jump=sampleEmbeddedClip(data.jumpDelta,data.jumpFrameCount,bone,math.max(0,math.min(1,t or 0)))
+  if not jump then return base end
+  local A=data.animBone or {}
+  local tt=math.max(0,math.min(1,t or 0))
+  local function smooth(x) if x<=0 then return 0 elseif x>=1 then return 1 end return x*x*(3-2*x) end
+  -- Blend the authored jump over the running gait instead of freezing the legs
+  -- at takeoff. The hips/legs retain enough run locomotion to make the jump
+  -- connect naturally to the supplied Run clip while the upper body follows
+  -- the authored Jumping clip more strongly.
+  local w=math.min(smooth(tt/0.10),smooth((1-tt)/0.20))
+  local carry=0.0
+  if bone==A.Hips then
+    carry=0.58
+  elseif bone==A.LThigh or bone==A.RThigh or bone==A.LLeg or bone==A.RLeg
+      or bone==A.LFoot or bone==A.RFoot or bone==A.LToe or bone==A.RToe then
+    carry=0.44
+  elseif bone==A.Spine1 or bone==A.Spine2 or bone==A.Spine3 then
+    carry=0.14
+  elseif bone==A.LArm or bone==A.RArm or bone==A.LForeArm or bone==A.RForeArm
+      or bone==A.LHand or bone==A.RHand then
+    carry=0.08
+  end
+  return blend16(base,jump,w*(1.0-carry*move))
+end
+
+local function beelJumpDelta(data,bone,t,phase,motionBlend)
+  local move=motionBlend or 0
+  if move<0 then move=0 elseif move>1 then move=1 end
+  local base=beelEmbeddedDelta(data,bone,phase,move)
+  local jump=sampleEmbeddedClip(data.jumpDelta,data.jumpFrameCount,bone,math.max(0,math.min(1,t or 0)))
+  local A=data.animBone or {}
+  if bone==A.LBreast or bone==A.RBreast then
+    return beelBreastDelta(data,bone,phase,move,t)
+  end
+  if not jump then return base end
+  local tt=math.max(0,math.min(1,t or 0))
+  local function smooth(x) if x<=0 then return 0 elseif x>=1 then return 1 end return x*x*(3-2*x) end
+  local fadeIn=smooth(tt/0.10)
+  local fadeOut=smooth((1-tt)/0.22)
+  local w=math.min(fadeIn,fadeOut)
+
+  -- Locomotion-aware jump blend.  While moving, keep the Fast Run phase alive
+  -- underneath the authored jump instead of replacing it. Hips carry the most
+  -- run motion, legs keep half, and the upper body takes most of the jump pose.
+  local carry=0.0
+  if bone==A.Hips then
+    carry=0.65
+  elseif bone==A.LThigh or bone==A.RThigh or bone==A.LLeg or bone==A.RLeg
+      or bone==A.LFoot or bone==A.RFoot or bone==A.LToe or bone==A.RToe then
+    carry=0.50
+  elseif bone==A.Spine1 or bone==A.Spine2 or bone==A.Spine3 then
+    carry=0.20
+  elseif bone==A.LArm or bone==A.RArm or bone==A.LForeArm or bone==A.RForeArm
+      or bone==A.LHand or bone==A.RHand then
+    carry=0.15
+  end
+  local jumpWeight=w*(1.0-carry*move)
+  return blend16(base,jump,jumpWeight)
+end
+
 local function jumpBoneDelta(data,bone,t)
   local A=data.animBone
   local crouch=sampleJump(JUMP.crouch,t)
   local lean=sampleJump(JUMP.lean,t)
+  if data.runtimeProfile=="BEELSTARMON" then
+    local A=data.animBone
+    -- Beelstarmon's world-space jump already raises the character.  The stock
+    -- jump pose also pushed Waist/Hips downward, which made this tall static-FBX
+    -- conversion visibly sink into the floor.  Keep the root chain centered and
+    -- put the jump compression into the limbs instead.
+    if bone==A.Waist or bone==A.Hips then
+      return nil
+    elseif bone==A.Spine1 then
+      return rotX(math.rad(CONFIG.jumpLeanDeg*lean*0.22))
+    elseif bone==A.Spine2 then
+      return rotX(math.rad(CONFIG.jumpLeanDeg*lean*0.10))
+    elseif bone==A.Spine3 then
+      return rotX(math.rad(CONFIG.jumpLeanDeg*lean*0.05))
+    elseif bone==A.Neck then
+      return rotX(math.rad(sampleJump(JUMP.headNod,t)*0.12))
+    elseif bone==A.Head then
+      return rotX(math.rad(sampleJump(JUMP.headNod,t)*0.20))
+    elseif bone==A.LArm then
+      return rotX(math.rad(sampleJump(JUMP.lArm,t)*0.34))
+    elseif bone==A.RArm then
+      return rotX(math.rad(-sampleJump(JUMP.rArm,t)*0.34))
+    elseif bone==A.LForeArm then
+      return rotX(math.rad(-sampleJump(JUMP.lElbow,t)*0.30))
+    elseif bone==A.RForeArm then
+      return rotX(math.rad(sampleJump(JUMP.rElbow,t)*0.30))
+    elseif bone==A.LHand then
+      local w=sampleJump(JUMP.wrist,t)
+      return compose(rotX(math.rad(w*0.16)),rotZ(math.rad(-w*0.10)))
+    elseif bone==A.RHand then
+      local w=sampleJump(JUMP.wrist,t)
+      return compose(rotX(math.rad(-w*0.16)),rotZ(math.rad(w*0.10)))
+    elseif bone==A.LThigh then
+      return rotX(math.rad(sampleJump(JUMP.lThigh,t)*0.42))
+    elseif bone==A.RThigh then
+      return rotX(math.rad(sampleJump(JUMP.rThigh,t)*0.42))
+    elseif bone==A.LKnee then
+      return rotX(math.rad(6.0 + sampleJump(JUMP.lKnee,t)*0.68))
+    elseif bone==A.RKnee then
+      return rotX(math.rad(6.0 + sampleJump(JUMP.rKnee,t)*0.68))
+    elseif bone==A.LLeg then
+      return rotX(math.rad(sampleJump(JUMP.lKnee,t)*0.10))
+    elseif bone==A.RLeg then
+      return rotX(math.rad(sampleJump(JUMP.rKnee,t)*0.10))
+    elseif bone==A.LFoot then
+      return rotX(math.rad(-4.0 + sampleJump(JUMP.lFoot,t)*0.54))
+    elseif bone==A.RFoot then
+      return rotX(math.rad(-4.0 + sampleJump(JUMP.rFoot,t)*0.54))
+    elseif bone==A.LToe then
+      return rotX(math.rad(2.0 + sampleJump(JUMP.lToe,t)*0.34))
+    elseif bone==A.RToe then
+      return rotX(math.rad(2.0 + sampleJump(JUMP.rToe,t)*0.34))
+    elseif bone==A.LBreast or bone==A.RBreast then
+      -- Strong secondary bounce on takeoff/landing: five times the baseline.
+      local pulse=math.sin(t*math.pi*3.0)*(1.0-t*0.35)
+      local side=(bone==A.LBreast) and -1 or 1
+      return compose(translate16(side*0.004*pulse,0.062*pulse,0.024*pulse),rotX(math.rad(2.8*pulse)))
+    elseif bone==A.HairRoot then
+      -- Root hair follows the head quickly; the tip below lags much farther.
+      local pulse=math.sin(t*math.pi*2.0)*(1.0-t*0.22)
+      return compose(translate16(0,0,0.010*pulse),compose3(rotX(math.rad(-8.0*pulse)),rotY(math.rad(2.5*pulse)),rotZ(math.rad(3.5*pulse))))
+    elseif bone==A.HairTip then
+      local pulse=math.sin((t+0.10)*math.pi*2.0)*(1.0-t*0.16)
+      return compose(translate16(0,0,0.028*pulse),compose3(rotX(math.rad(-18.0*pulse)),rotY(math.rad(5.0*pulse)),rotZ(math.rad(8.5*pulse))))
+    elseif bone==A.CapeTop or bone==A.CapeMid or bone==A.CapeBottom or
+        bone==A.CapeLTop or bone==A.CapeLMid or bone==A.CapeLTip or
+        bone==A.CapeRTop or bone==A.CapeRMid or bone==A.CapeRTip then
+      local C=data.runtimeCloth
+      local node=nil
+      if C then
+        if bone==A.CapeTop then node=C.ct elseif bone==A.CapeMid then node=C.cm elseif bone==A.CapeBottom then node=C.cb
+        elseif bone==A.CapeLTop then node=C.lt elseif bone==A.CapeLMid then node=C.lm elseif bone==A.CapeLTip then node=C.lb
+        elseif bone==A.CapeRTop then node=C.rt elseif bone==A.CapeRMid then node=C.rm elseif bone==A.CapeRTip then node=C.rb end
+      end
+      local pulse=math.sin((t+0.08)*math.pi*2.0)*(1.0-t*0.16)
+      local tip=(bone==A.CapeBottom or bone==A.CapeLTip or bone==A.CapeRTip)
+      local mid=(bone==A.CapeMid or bone==A.CapeLMid or bone==A.CapeRMid)
+      local kick=tip and -16.0*pulse or (mid and -10.0*pulse or -5.0*pulse)
+      local py=(node and node.p or 0)+kick
+      local yy=(node and node.y or 0)+(tip and 3.2*pulse or (mid and 1.8*pulse or 0.8*pulse))
+      local tz=tip and 0.040*pulse or (mid and 0.022*pulse or 0.008*pulse)
+      return compose(translate16(0,0,tz),compose(rotX(math.rad(py)),rotZ(math.rad(yy))))
+    end
+  end
+  -- SHREK_RED jump uses the dedicated rig-axis branches below.
   if bone==A.Waist then
     return compose(translate16(0,-CONFIG.jumpCrouchUnits*crouch*0.45,0),
                    rotY(math.rad(CONFIG.jumpLeanDeg*lean*0.35)))
   elseif bone==A.Spine1 then
-    if data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC" or data.runtimeProfile=="AANG" or data.runtimeProfile=="CJ" then
-      return rotX(math.rad(CONFIG.jumpLeanDeg*lean))
+    if data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC" or data.runtimeProfile=="AANG" or data.runtimeProfile=="CJ" or data.runtimeProfile=="SHREK_RED" then
+      return rotX(math.rad(CONFIG.jumpLeanDeg*lean*0.65))
     end
     return rotY(math.rad(CONFIG.jumpLeanDeg*lean))
   elseif bone==A.Spine2 then
@@ -551,6 +1109,8 @@ local function jumpBoneDelta(data,bone,t)
       local rest=rotZ(math.rad(-(data.runtimeArmRest or 0)))
       local swing=rotY(math.rad(sampleJump(JUMP.lArm,t)*0.42))
       return compose(rest,swing)
+    elseif data.runtimeProfile=="SHREK_RED" then
+      return compose(rotX(math.rad(sampleJump(JUMP.lArm,t)*0.30)), rotZ(math.rad(-42)))
     end
     return compose(rotZ(math.rad(-(data.runtimeArmRest or CONFIG.armRestDeg))),rotY(math.rad(sampleJump(JUMP.lArm,t))))
   elseif bone==A.RArm then
@@ -573,6 +1133,8 @@ local function jumpBoneDelta(data,bone,t)
       local rest=rotZ(math.rad(data.runtimeArmRest or 0))
       local swing=rotY(math.rad(sampleJump(JUMP.rArm,t)*0.42))
       return compose(rest,swing)
+    elseif data.runtimeProfile=="SHREK_RED" then
+      return compose(rotX(math.rad(-sampleJump(JUMP.rArm,t)*0.30)), rotZ(math.rad(42)))
     end
     return compose(rotZ(math.rad(data.runtimeArmRest or CONFIG.armRestDeg)),rotY(math.rad(sampleJump(JUMP.rArm,t))))
   elseif bone==A.LForeArm then
@@ -582,6 +1144,7 @@ local function jumpBoneDelta(data,bone,t)
     if data.runtimeProfile=="CJ" then return rotY(math.rad(-10-a*0.18)) end
     if data.runtimeProfile=="CLOUD" then return rotZ(math.rad(-a*0.30)) end
     if data.runtimeProfile=="GENERIC" then return rotX(math.rad(-a*0.42)) end
+    if data.runtimeProfile=="SHREK_RED" then return compose(rotX(math.rad(-a*0.32)), rotZ(math.rad(-14))) end
     return rotY(math.rad(data.runtimeProfile=="YUGI" and -a*0.52 or -a))
   elseif bone==A.RForeArm then
     local a=sampleJump(JUMP.rElbow,t)
@@ -590,6 +1153,7 @@ local function jumpBoneDelta(data,bone,t)
     if data.runtimeProfile=="CJ" then return rotY(math.rad(52+a*0.10)) end
     if data.runtimeProfile=="CLOUD" then return rotZ(math.rad(a*0.30)) end
     if data.runtimeProfile=="GENERIC" then return rotX(math.rad(-a*0.42)) end
+    if data.runtimeProfile=="SHREK_RED" then return compose(rotX(math.rad(a*0.32)), rotZ(math.rad(14))) end
     return rotY(math.rad(data.runtimeProfile=="YUGI" and a*0.52 or -a))
   elseif bone==A.LHand then
     local w=sampleJump(JUMP.wrist,t)
@@ -603,55 +1167,55 @@ local function jumpBoneDelta(data,bone,t)
     if data.runtimeProfile=="AANG" then return rotY(-a) end
     if data.runtimeProfile=="CLOUD" then return rotZ(a) end
     if data.runtimeProfile=="CJ" then return rotX(a*0.08) end
-    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC") and rotX(a) or rotY(a)
+    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC" or data.runtimeProfile=="SHREK_RED") and rotX(a) or rotY(a)
   elseif bone==A.RThigh then
     local a=math.rad(sampleJump(JUMP.rThigh,t))
     if data.runtimeProfile=="NARUTO" then return rotAxis(0.3321,-0.1095,-0.9369,a) end
     if data.runtimeProfile=="AANG" then return rotY(-a) end
     if data.runtimeProfile=="CLOUD" then return rotZ(a) end
     if data.runtimeProfile=="CJ" then return rotX(a*0.08) end
-    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC") and rotX(a) or rotY(a)
+    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC" or data.runtimeProfile=="SHREK_RED") and rotX(a) or rotY(a)
   elseif bone==A.LLeg then
     local a=math.rad(sampleJump(JUMP.lKnee,t))
     if data.runtimeProfile=="NARUTO" then return rotAxis(-0.2949,0.1239,-0.9474,a) end
     if data.runtimeProfile=="AANG" then return rotY(-a) end
     if data.runtimeProfile=="CLOUD" then return rotZ(a) end
     if data.runtimeProfile=="CJ" then return rotX(a*0.11) end
-    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC") and rotX(a) or rotY(a)
+    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC" or data.runtimeProfile=="SHREK_RED") and rotX(a) or rotY(a)
   elseif bone==A.RLeg then
     local a=math.rad(sampleJump(JUMP.rKnee,t))
     if data.runtimeProfile=="NARUTO" then return rotAxis(0.3321,-0.1095,-0.9369,a) end
     if data.runtimeProfile=="AANG" then return rotY(-a) end
     if data.runtimeProfile=="CLOUD" then return rotZ(a) end
     if data.runtimeProfile=="CJ" then return rotX(a*0.11) end
-    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC") and rotX(a) or rotY(a)
+    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC" or data.runtimeProfile=="SHREK_RED") and rotX(a) or rotY(a)
   elseif bone==A.LFoot then
     local a=math.rad(sampleJump(JUMP.lFoot,t))
     if data.runtimeProfile=="NARUTO" then return rotAxis(-0.0475,0.3446,0.9376,a) end
     if data.runtimeProfile=="AANG" then return rotY(-a) end
     if data.runtimeProfile=="CLOUD" then return rotZ(a) end
     if data.runtimeProfile=="CJ" then return rotX(a*0.20) end
-    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC") and rotX(a) or rotY(a)
+    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC" or data.runtimeProfile=="SHREK_RED") and rotX(a) or rotY(a)
   elseif bone==A.RFoot then
     local a=math.rad(sampleJump(JUMP.rFoot,t))
     if data.runtimeProfile=="NARUTO" then return rotAxis(0.0349,-0.4342,0.9002,a) end
     if data.runtimeProfile=="AANG" then return rotY(-a) end
     if data.runtimeProfile=="CLOUD" then return rotZ(a) end
     if data.runtimeProfile=="CJ" then return rotX(a*0.20) end
-    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC") and rotX(a) or rotY(a)
+    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC" or data.runtimeProfile=="SHREK_RED") and rotX(a) or rotY(a)
   elseif bone==A.LToe then
     local a=math.rad(sampleJump(JUMP.lToe,t))
     if data.runtimeProfile=="NARUTO" then return rotAxis(-0.0475,0.3446,0.9376,a) end
     if data.runtimeProfile=="AANG" then return rotY(-a) end
     if data.runtimeProfile=="CLOUD" then return rotZ(a) end
     if data.runtimeProfile=="CJ" then return rotX(a*0.08) end
-    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC") and rotX(a) or rotY(a)
+    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC" or data.runtimeProfile=="SHREK_RED") and rotX(a) or rotY(a)
   elseif bone==A.RToe then
     local a=math.rad(sampleJump(JUMP.rToe,t))
     if data.runtimeProfile=="NARUTO" then return rotAxis(0.0349,-0.4342,0.9002,a) end
     if data.runtimeProfile=="AANG" then return rotY(-a) end
     if data.runtimeProfile=="CLOUD" then return rotZ(a) end
-    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC") and rotX(a) or rotY(a)
+    return (data.runtimeProfile=="YUGI" or data.runtimeProfile=="GENERIC" or data.runtimeProfile=="SHREK_RED") and rotX(a) or rotY(a)
   end
   return nil
 end
@@ -664,6 +1228,24 @@ local function boneDelta(data, bone, phaseRadians, walkSin, walkCos, bounce, wal
 
   local phase=wrap01(phaseRadians/(math.pi*2))
   local opposite=wrap01(phase+0.5)
+
+  if data.runtimeProfile=="ASH" and data.runDelta then
+    return ashEmbeddedDelta(data,bone,phase,blend)
+  elseif data.runtimeCharacterId=="BELLESTARMON" and data.walkDelta and data.runDelta then
+    return belleLocomotionDelta(data,bone,phase,blend)
+  elseif data.runtimeProfile=="AANG_MIXAMO" and data.runDelta then
+    return aangEmbeddedDelta(data,bone,phase,blend)
+  elseif data.runtimeProfile=="CJ_FBX" and data.runDelta then
+    return cjEmbeddedDelta(data,bone,phase,blend)
+  elseif data.runtimeProfile=="YAMI_FBX" and data.runDelta then
+    return yamiEmbeddedDelta(data,bone,phase,blend)
+  elseif data.runtimeProfile=="NARUTO_MIXAMO" and data.runDelta then
+    return narutoEmbeddedDelta(data,bone,phase,blend)
+  elseif data.runtimeProfile=="BEELSTARMON_MIXAMO" and data.runDelta then
+    local breast=beelBreastDelta(data,bone,phase,blend,nil)
+    if breast then return breast end
+    return beelEmbeddedDelta(data,bone,phase,blend)
+  end
 
   local lThigh=sampleCycle(GAIT.thigh,phase)
   local rThigh=sampleCycle(GAIT.thigh,opposite)
@@ -709,6 +1291,39 @@ local function boneDelta(data, bone, phaseRadians, walkSin, walkCos, bounce, wal
   local lToe=sampleCycle(GAIT.toe,wrap01(phase-0.055))
   local rToe=sampleCycle(GAIT.toe,wrap01(opposite-0.055))
 
+  -- Character-specific gait amplitudes. Red is a light jog: quicker than a
+  -- walk, but without the exaggerated sprint reach. Naruto keeps a quick leg
+  -- cycle while his upper body is handled by the dedicated ninja-run branch.
+  if data.runtimeProfile=="RED" then
+    lThigh=lThigh*1.02
+    rThigh=rThigh*1.02
+    lKnee=12+(lKnee-12)*0.94
+    rKnee=12+(rKnee-12)*0.94
+    lFoot=lFoot*0.96
+    rFoot=rFoot*0.96
+    lToe=lToe*1.02
+    rToe=rToe*1.02
+    lArm=lArm*0.74
+    rArm=rArm*0.74
+    lElbow=56+(lElbow-56)*0.54
+    rElbow=56+(rElbow-56)*0.54
+    lWristPitch=lWristPitch*0.46
+    rWristPitch=rWristPitch*0.46
+  elseif data.runtimeProfile=="NARUTO" then
+    lThigh=lThigh*1.10
+    rThigh=rThigh*1.10
+    lKnee=12+(lKnee-12)*0.92
+    rKnee=12+(rKnee-12)*0.92
+    lFoot=lFoot*1.02
+    rFoot=rFoot*1.02
+    lToe=lToe*0.92
+    rToe=rToe*0.92
+    lArm=lArm*0.12
+    rArm=rArm*0.12
+    lElbow=24+(lElbow-24)*0.16
+    rElbow=24+(rElbow-24)*0.16
+  end
+
   local bob=sampleCycle(GAIT.bob,phase)*CONFIG.hipBobUnits*blend
   local twist=sampleCycle(GAIT.twist,phase)*CONFIG.hipTwistDeg*blend
   local shoulderWave=sampleCycle(GAIT.twist,wrap01(phase+0.5))*blend
@@ -717,14 +1332,349 @@ local function boneDelta(data, bone, phaseRadians, walkSin, walkCos, bounce, wal
   local headTurn=sampleCycle(GAIT.headTurn,wrap01(phase-0.030))*CONFIG.headYawDeg*blend
   local headRoll=sampleCycle(GAIT.headRoll,wrap01(phase-0.020))*CONFIG.headRollDeg*blend
 
+  if data.runtimeProfile=="RED" then
+    -- Light-jog body rhythm: enough vertical compression and counter-rotation
+    -- to read as jogging, but kept restrained so the feet stay grounded.
+    bob=bob*0.64
+    twist=twist*0.88
+    shoulderWave=shoulderWave*0.86
+    headBob=headBob*0.52
+    headNod=headNod*0.64
+    headRoll=headRoll*0.48
+  elseif data.runtimeProfile=="NARUTO" then
+    bob=bob*0.24
+    twist=twist*0.34
+    shoulderWave=shoulderWave*0.22
+    headBob=headBob*0.18
+    headNod=headNod*0.28
+    headRoll=headRoll*0.16
+  end
+
+  -- Dedicated Red light-jog pass. Red's model has real shoulder, hand, head,
+  -- and toe bones, so v2.8.31 exposes them in animBone and animates the full
+  -- chain instead of driving only the middle of each limb.
+  if data.runtimeProfile=="RED" then
+    if bone==A.Waist then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,bob*0.38,0),rotZ(math.rad(twist*0.08)))
+    elseif bone==A.Hips then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,bob*0.07,0),rotZ(math.rad(twist*0.24)))
+    elseif bone==A.Spine1 then
+      if blend<=0.0001 then return nil end
+      return compose(rotY(math.rad(-3.2*blend)),rotZ(math.rad(-twist*0.18)))
+    elseif bone==A.Spine2 then
+      if blend<=0.0001 then return nil end
+      return rotZ(math.rad(shoulderWave*0.70))
+    elseif bone==A.Spine3 then
+      if blend<=0.0001 then return nil end
+      return rotZ(math.rad(shoulderWave*0.52))
+    elseif bone==A.Neck then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,headBob*0.20,0),rotX(math.rad(headNod*0.20)))
+    elseif bone==A.Head then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,headBob*0.42,0),compose3(rotX(math.rad(headNod*0.42)),rotY(math.rad(headTurn*0.28)),rotZ(math.rad(headRoll*0.25))))
+    elseif bone==A.LShoulder then
+      return compose(rotY(math.rad(-twist*0.10)),rotZ(math.rad(-1.0-shoulderWave*0.08)))
+    elseif bone==A.RShoulder then
+      return compose(rotY(math.rad(-twist*0.10)),rotZ(math.rad(1.0+shoulderWave*0.08)))
+    elseif bone==A.LArm then
+      local rest=rotZ(math.rad(-84))
+      local swing=rotY(math.rad(lArm*blend*0.72))
+      local settle=rotX(math.rad(-1.2-shoulderWave*0.06))
+      return compose(rest,compose(swing,settle))
+    elseif bone==A.RArm then
+      local rest=rotZ(math.rad(84))
+      local swing=rotY(math.rad(rArm*blend*0.72))
+      local settle=rotX(math.rad(1.2+shoulderWave*0.06))
+      return compose(rest,compose(swing,settle))
+    elseif bone==A.LForeArm then
+      local flex=28+(lElbow-56)*0.22
+      local lag=2.4*math.sin((phase+0.06)*math.pi*2)*blend
+      return compose(rotY(math.rad(-flex)),rotX(math.rad(lag)))
+    elseif bone==A.RForeArm then
+      local flex=28+(rElbow-56)*0.22
+      local lag=-2.4*math.sin((opposite+0.06)*math.pi*2)*blend
+      return compose(rotY(math.rad(-flex)),rotX(math.rad(lag)))
+    elseif bone==A.LHand then
+      return compose3(rotX(math.rad(lWristPitch*0.13*blend)),rotY(math.rad(lWristYaw*0.10*blend)),rotZ(math.rad(-1.2+lWristRoll*0.06*blend)))
+    elseif bone==A.RHand then
+      return compose3(rotX(math.rad(-rWristPitch*0.13*blend)),rotY(math.rad(-rWristYaw*0.10*blend)),rotZ(math.rad(1.2-rWristRoll*0.06*blend)))
+    elseif bone==A.LThigh then
+      return rotY(math.rad(lThigh*blend))
+    elseif bone==A.RThigh then
+      return rotY(math.rad(rThigh*blend))
+    elseif bone==A.LLeg then
+      return rotY(math.rad(lKnee*blend))
+    elseif bone==A.RLeg then
+      return rotY(math.rad(rKnee*blend))
+    elseif bone==A.LFoot then
+      return rotY(math.rad(lFoot*blend))
+    elseif bone==A.RFoot then
+      return rotY(math.rad(rFoot*blend))
+    elseif bone==A.LToe then
+      return rotY(math.rad(lToe*blend*0.70))
+    elseif bone==A.RToe then
+      return rotY(math.rad(rToe*blend*0.70))
+    end
+  end
+
+  -- Dedicated Naruto ninja-run pass. Push the torso forward and hold the arms
+  -- nearly straight and level behind the body in the recognisable anime pose.
+  if data.runtimeProfile=="NARUTO" then
+    local sway=math.sin(phase*math.pi*2)*blend
+    if bone==A.Waist then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,bob*0.02,0),rotZ(math.rad(twist*0.04)))
+    elseif bone==A.Hips then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,bob*0.02,0),rotZ(math.rad(twist*0.06)))
+    elseif bone==A.Spine1 then
+      if blend<=0.0001 then return nil end
+      return rotX(math.rad(-17.5*blend))
+    elseif bone==A.Spine2 then
+      if blend<=0.0001 then return nil end
+      return rotX(math.rad(-8.0*blend))
+    elseif bone==A.Spine3 then
+      if blend<=0.0001 then return nil end
+      return rotX(math.rad(-3.5*blend))
+    elseif bone==A.Neck then
+      if blend<=0.0001 then return nil end
+      return rotX(math.rad(10.0*blend+headNod*0.06))
+    elseif bone==A.Head then
+      if blend<=0.0001 then return nil end
+      return compose3(rotX(math.rad(6.0*blend+headNod*0.08)),rotY(math.rad(headTurn*0.08)),rotZ(math.rad(headRoll*0.04)))
+    elseif bone==A.LShoulder then
+      -- Numerically solved against Naruto's actual SMD bind matrices so the
+      -- whole chain stays OUTSIDE the torso, shoulder-height, and behind him.
+      return compose3(rotX(math.rad(-91.5)),rotY(math.rad(43.0)),rotZ(math.rad(37.3)))
+    elseif bone==A.LArm then
+      return compose3(rotX(math.rad(-1.9+sway*0.22)),rotY(math.rad(-0.3)),rotZ(math.rad(7.8)))
+    elseif bone==A.LForeArm then
+      return compose3(rotX(math.rad(-12.3+sway*0.12)),rotY(math.rad(5.0)),rotZ(math.rad(-13.7)))
+    elseif bone==A.LHand then
+      return compose3(rotX(math.rad(-1.0+sway*0.08)),rotY(math.rad(0.0)),rotZ(math.rad(0.0)))
+    elseif bone==A.RShoulder then
+      return compose3(rotX(math.rad(87.4)),rotY(math.rad(-37.2)),rotZ(math.rad(34.5)))
+    elseif bone==A.RArm then
+      return compose3(rotX(math.rad(2.3-sway*0.22)),rotY(math.rad(0.2)),rotZ(math.rad(4.1)))
+    elseif bone==A.RForeArm then
+      return compose3(rotX(math.rad(12.0-sway*0.12)),rotY(math.rad(-2.3)),rotZ(math.rad(-11.6)))
+    elseif bone==A.RHand then
+      return compose3(rotX(math.rad(-1.0-sway*0.08)),rotY(math.rad(0.0)),rotZ(math.rad(0.0)))
+    elseif bone==A.LThigh then
+      return rotAxis(-0.2949,0.1239,-0.9474,math.rad(lThigh*blend*1.02))
+    elseif bone==A.RThigh then
+      return rotAxis(0.3321,-0.1095,-0.9369,math.rad(rThigh*blend*1.02))
+    elseif bone==A.LLeg then
+      return rotAxis(-0.2949,0.1239,-0.9474,math.rad(lKnee*blend*0.90))
+    elseif bone==A.RLeg then
+      return rotAxis(0.3321,-0.1095,-0.9369,math.rad(rKnee*blend*0.90))
+    elseif bone==A.LFoot then
+      return rotAxis(-0.0475,0.3446,0.9376,math.rad(lFoot*blend*0.90))
+    elseif bone==A.RFoot then
+      return rotAxis(0.0349,-0.4342,0.9002,math.rad(rFoot*blend*0.90))
+    elseif bone==A.LToe then
+      return rotAxis(-0.0475,0.3446,0.9376,math.rad(lToe*blend*0.68))
+    elseif bone==A.RToe then
+      return rotAxis(0.0349,-0.4342,0.9002,math.rad(rToe*blend*0.68))
+    end
+  end
+
+  -- Beelstarmon uses a procedural world-aligned humanoid rig generated from
+  -- the supplied static FBX.  It has dedicated chest secondary-motion bones;
+  -- the requested exaggerated setting is five times the baseline jiggle amount.
+  if data.runtimeProfile=="BEELSTARMON" then
+    local breastWave=math.sin(phase*math.pi*4.0)*blend
+    local breastWave2=math.sin((phase+0.08)*math.pi*4.0)*blend
+    local breastY=0.050*breastWave       -- five-times secondary motion, now localized to the actual chest
+    local breastZ=0.020*breastWave2
+    local hair1=math.sin((phase+0.08)*math.pi*2.0)*blend
+    local hair2=math.sin((phase+0.18)*math.pi*2.0)*blend
+    local cloth1=math.sin((phase+0.10)*math.pi*2.0)*blend
+    local cloth2=math.sin((phase+0.22)*math.pi*2.0)*blend
+    local cloth3=math.sin((phase+0.34)*math.pi*2.0)*blend
+    local strideDrag=math.max(0, -math.sin(phase*math.pi*2.0))*blend
+    local swayDrag=math.sin((phase+0.25)*math.pi*2.0)*blend
+    if bone==A.Waist then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,bob*0.22,0),rotZ(math.rad(twist*0.10)))
+    elseif bone==A.Hips then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,bob*0.05,0),rotZ(math.rad(twist*0.26)))
+    elseif bone==A.Spine1 then
+      if blend<=0.0001 then return nil end
+      return compose(rotX(math.rad(-CONFIG.jogLeanDeg*blend*0.42)),rotZ(math.rad(-twist*0.16)))
+    elseif bone==A.Spine2 then
+      if blend<=0.0001 then return nil end
+      return rotZ(math.rad(shoulderWave*0.58))
+    elseif bone==A.Spine3 then
+      if blend<=0.0001 then return nil end
+      return rotZ(math.rad(shoulderWave*0.42))
+    elseif bone==A.Neck then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,headBob*0.15,0),rotX(math.rad(headNod*0.17)))
+    elseif bone==A.Head then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,headBob*0.30,0),compose3(rotX(math.rad(headNod*0.28)),rotY(math.rad(headTurn*0.20)),rotZ(math.rad(headRoll*0.18))))
+    elseif bone==A.LShoulder then
+      return compose(rotY(math.rad(-twist*0.08)),rotZ(math.rad(-1.2-shoulderWave*0.08)))
+    elseif bone==A.RShoulder then
+      return compose(rotY(math.rad(-twist*0.08)),rotZ(math.rad(1.2+shoulderWave*0.08)))
+    elseif bone==A.LArm then
+      return compose(rotX(math.rad(lArm*blend*0.48)),rotZ(math.rad(-2.0)))
+    elseif bone==A.RArm then
+      return compose(rotX(math.rad(-rArm*blend*0.48)),rotZ(math.rad(2.0)))
+    elseif bone==A.LForeArm then
+      local e=20+(lElbow-20)*0.42
+      local lag=2.2*math.sin((phase+0.08)*math.pi*2.0)*blend
+      return compose(rotX(math.rad(-e*0.58)),rotZ(math.rad(lag)))
+    elseif bone==A.RForeArm then
+      local e=20+(rElbow-20)*0.42
+      local lag=-2.2*math.sin((opposite+0.08)*math.pi*2.0)*blend
+      return compose(rotX(math.rad(e*0.58)),rotZ(math.rad(lag)))
+    elseif bone==A.LHand then
+      return compose3(rotX(math.rad(lWristPitch*0.18*blend)),rotY(math.rad(lWristYaw*0.12*blend)),rotZ(math.rad(-1.2+lWristRoll*0.08*blend)))
+    elseif bone==A.RHand then
+      return compose3(rotX(math.rad(-rWristPitch*0.18*blend)),rotY(math.rad(-rWristYaw*0.12*blend)),rotZ(math.rad(1.2-rWristRoll*0.08*blend)))
+    elseif bone==A.LThigh then
+      -- Hip carries the stride; the appended knee joint below now creates the
+      -- actual visible hinge instead of making the entire shin bend as one rod.
+      return compose(rotX(math.rad(lThigh*blend*0.52)), rotZ(math.rad(0.45*math.sin(phase*math.pi*2.0)*blend)))
+    elseif bone==A.RThigh then
+      return compose(rotX(math.rad(rThigh*blend*0.52)), rotZ(math.rad(-0.45*math.sin(opposite*math.pi*2.0)*blend)))
+    elseif bone==A.LKnee then
+      local k=12+(lKnee-12)*0.72
+      return compose(rotX(math.rad(k*blend*0.88)), rotZ(math.rad(0.30*math.sin((phase+0.08)*math.pi*2.0)*blend)))
+    elseif bone==A.RKnee then
+      local k=12+(rKnee-12)*0.72
+      return compose(rotX(math.rad(k*blend*0.88)), rotZ(math.rad(-0.30*math.sin((opposite+0.08)*math.pi*2.0)*blend)))
+    elseif bone==A.LLeg then
+      local k=12+(lKnee-12)*0.72
+      return rotX(math.rad(k*blend*0.12))
+    elseif bone==A.RLeg then
+      local k=12+(rKnee-12)*0.72
+      return rotX(math.rad(k*blend*0.12))
+    elseif bone==A.LFoot then
+      return compose(rotX(math.rad(-5.0 + lFoot*blend*0.62)), rotZ(math.rad(-0.35*math.sin((phase+0.03)*math.pi*2.0)*blend)))
+    elseif bone==A.RFoot then
+      return compose(rotX(math.rad(-5.0 + rFoot*blend*0.62)), rotZ(math.rad(0.35*math.sin((opposite+0.03)*math.pi*2.0)*blend)))
+    elseif bone==A.LToe then
+      return rotX(math.rad(3.0 + lToe*blend*0.44))
+    elseif bone==A.RToe then
+      return rotX(math.rad(3.0 + rToe*blend*0.44))
+    elseif bone==A.LBreast then
+      return compose(translate16(-0.005*breastWave2,breastY,breastZ),rotX(math.rad(2.4*breastWave)))
+    elseif bone==A.RBreast then
+      return compose(translate16(0.005*breastWave2,breastY*0.96,breastZ*0.92),rotX(math.rad(2.3*breastWave2)))
+    elseif bone==A.HairRoot then
+      -- Two-stage procedural hair lag. The root follows the head softly while
+      -- the long lower section has a delayed, wider swing.
+      return compose(translate16(0,0,0.004*hair1),compose3(rotX(math.rad(4.0*hair1)),rotY(math.rad(2.0*hair2)),rotZ(math.rad(2.8*hair2))))
+    elseif bone==A.HairTip then
+      return compose(translate16(0,0,0.012*hair2),compose3(rotX(math.rad(11.5*hair2)),rotY(math.rad(3.6*hair1)),rotZ(math.rad(7.0*hair2))))
+    elseif bone==A.CapeTop or bone==A.CapeMid or bone==A.CapeBottom or
+        bone==A.CapeLTop or bone==A.CapeLMid or bone==A.CapeLTip or
+        bone==A.CapeRTop or bone==A.CapeRMid or bone==A.CapeRTip then
+      local C=data.runtimeCloth
+      local node=nil
+      if C then
+        if bone==A.CapeTop then node=C.ct elseif bone==A.CapeMid then node=C.cm elseif bone==A.CapeBottom then node=C.cb
+        elseif bone==A.CapeLTop then node=C.lt elseif bone==A.CapeLMid then node=C.lm elseif bone==A.CapeLTip then node=C.lb
+        elseif bone==A.CapeRTop then node=C.rt elseif bone==A.CapeRMid then node=C.rm elseif bone==A.CapeRTip then node=C.rb end
+      end
+      if node then
+        local depth=0.004
+        if bone==A.CapeMid or bone==A.CapeLMid or bone==A.CapeRMid then depth=0.010
+        elseif bone==A.CapeBottom or bone==A.CapeLTip or bone==A.CapeRTip then depth=0.018 end
+        return compose(translate16(0,0,depth*math.sin(math.rad(node.p or 0))),compose(rotX(math.rad(node.p or 0)),rotZ(math.rad(node.y or 0))))
+      end
+      -- deterministic fallback for runtimes that skip the frame-state update
+      if bone==A.CapeTop then return compose(rotX(math.rad(2.0+2.0*cloth1)),rotZ(math.rad(cloth1))) end
+      if bone==A.CapeMid then return compose(rotX(math.rad(4.0+4.0*cloth2)),rotZ(math.rad(cloth2*1.5))) end
+      if bone==A.CapeBottom then return compose(rotX(math.rad(7.0+7.0*cloth3)),rotZ(math.rad(cloth3*2.2))) end
+      local side=(bone==A.CapeLTop or bone==A.CapeLMid or bone==A.CapeLTip) and 1 or -1
+      local amp=(bone==A.CapeLTip or bone==A.CapeRTip) and 8 or ((bone==A.CapeLMid or bone==A.CapeRMid) and 5 or 3)
+      return compose(rotX(math.rad(amp+cloth2*amp*0.65)),rotZ(math.rad(side*cloth3*amp*0.35)))
+    end
+  end
+
+  -- Shrek's generated bind skeleton uses simple world-aligned joint axes.
+  -- Reuse Red's gait timing, but map it onto Shrek's actual axes instead of
+  -- blindly using Red's local-Y leg rotations (which twisted his knees sideways).
+  if data.runtimeProfile=="SHREK_RED" then
+    if bone==A.Waist then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,bob*0.45,0),rotZ(math.rad(twist*0.08)))
+    elseif bone==A.Hips then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,bob*0.12,0),rotZ(math.rad(twist*0.24)))
+    elseif bone==A.Spine1 then
+      if blend<=0.0001 then return nil end
+      return compose(rotX(math.rad(-CONFIG.jogLeanDeg*blend*0.55)),rotZ(math.rad(-twist*0.15)))
+    elseif bone==A.Spine2 then
+      if blend<=0.0001 then return nil end
+      return rotZ(math.rad(shoulderWave*CONFIG.shoulderTwistDeg*0.10))
+    elseif bone==A.Spine3 then
+      if blend<=0.0001 then return nil end
+      return rotZ(math.rad(shoulderWave*CONFIG.shoulderTwistDeg*0.08))
+    elseif bone==A.Neck then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,headBob*0.18,0),compose3(rotX(math.rad(headNod*0.24)),rotY(math.rad(headTurn*0.25)),rotZ(math.rad(-shoulderWave*CONFIG.headCounterDeg*0.22))))
+    elseif bone==A.Head then
+      if blend<=0.0001 then return nil end
+      return compose(translate16(0,headBob*0.42,0),compose3(rotX(math.rad(headNod*0.45)),rotY(math.rad(headTurn*0.35)),rotZ(math.rad((-shoulderWave*CONFIG.headCounterDeg*0.40)+headRoll*0.28))))
+    elseif bone==A.LShoulder or bone==A.RShoulder then
+      if blend<=0.0001 then return nil end
+      local sign=(bone==A.LShoulder) and -1 or 1
+      return rotZ(math.rad(sign*(6.5 + shoulderWave*0.30)))
+    elseif bone==A.LArm then
+      -- Shrek's generated bind has the upper arms spread too far out for Red's
+      -- straight application. First drop them inward around local Z, then add
+      -- a gentler fore/aft X swing so the hands stay beside the body.
+      return compose(rotX(math.rad(lArm*blend*0.42)), rotZ(math.rad(-42)))
+    elseif bone==A.RArm then
+      return compose(rotX(math.rad(-rArm*blend*0.42)), rotZ(math.rad(42)))
+    elseif bone==A.LForeArm then
+      local elbow=14+(lElbow-14)*blend
+      return compose(rotX(math.rad(-elbow*0.34)), rotZ(math.rad(-14)))
+    elseif bone==A.RForeArm then
+      local elbow=14+(rElbow-14)*blend
+      return compose(rotX(math.rad(elbow*0.34)), rotZ(math.rad(14)))
+    elseif bone==A.LHand then
+      return compose(rotX(math.rad(lWristPitch*0.14*blend)), rotZ(math.rad(-6)))
+    elseif bone==A.RHand then
+      return compose(rotX(math.rad(-rWristPitch*0.14*blend)), rotZ(math.rad(6)))
+    elseif bone==A.LThigh then
+      return rotX(math.rad(lThigh*blend*0.72))
+    elseif bone==A.RThigh then
+      return rotX(math.rad(rThigh*blend*0.72))
+    elseif bone==A.LLeg then
+      return rotX(math.rad(lKnee*blend*0.58))
+    elseif bone==A.RLeg then
+      return rotX(math.rad(rKnee*blend*0.58))
+    elseif bone==A.LFoot then
+      return rotX(math.rad(lFoot*blend*0.55))
+    elseif bone==A.RFoot then
+      return rotX(math.rad(rFoot*blend*0.55))
+    elseif bone==A.LToe then
+      return rotX(math.rad(lToe*blend*0.35))
+    elseif bone==A.RToe then
+      return rotX(math.rad(rToe*blend*0.35))
+    end
+  end
+
   if bone==A.Waist then
     if blend<=0.0001 then return nil end
-    return compose(translate16(0,bob*0.65,0),rotZ(math.rad(twist*0.10)))
+    local waistBob=(data.runtimeProfile=="RED") and (bob*0.28) or (bob*0.65)
+    return compose(translate16(0,waistBob,0),rotZ(math.rad(twist*0.10)))
   elseif bone==A.Spine1 then
     if blend<=0.0001 then return nil end
+    local leanAmount = CONFIG.jogLeanDeg*blend*((data.runtimeProfile=="RED") and 0.58 or 1.0)
     local leanRot = (data.runtimeProfile=="YUGI" or data.runtimeProfile=="NARUTO" or data.runtimeProfile=="GENERIC" or data.runtimeProfile=="AANG" or data.runtimeProfile=="CJ")
-      and rotX(math.rad(-CONFIG.jogLeanDeg*blend))
-      or rotY(math.rad(-CONFIG.jogLeanDeg*blend))
+      and rotX(math.rad(-leanAmount))
+      or rotY(math.rad(-leanAmount))
     return compose(leanRot,rotZ(math.rad(-twist*0.22)))
   elseif bone==A.Spine2 then
     if blend<=0.0001 then return nil end
@@ -752,10 +1702,14 @@ local function boneDelta(data, bone, phaseRadians, walkSin, walkCos, bounce, wal
     return compose(translate16(0,headBob,0), headRot)
   elseif bone==A.Hips then
     if blend<=0.0001 then return nil end
-    return compose(translate16(0,bob*0.18,0),rotZ(math.rad(twist*0.38)))
+    local hipsBob=(data.runtimeProfile=="RED") and (bob*0.05) or (bob*0.18)
+    return compose(translate16(0,hipsBob,0),rotZ(math.rad(twist*0.38)))
   elseif bone==A.LShoulder then
     if blend<=0.0001 then return nil end
     if data.runtimeProfile=="NARUTO" or data.runtimeProfile=="CJ" then return nil end
+    if data.runtimeProfile=="RED" then
+      return compose(rotY(math.rad(-twist*0.10)), rotZ(math.rad(-1.8 - shoulderWave*0.10)))
+    end
     return compose(
       rotY(math.rad(-twist*CONFIG.shoulderTwistDeg/CONFIG.hipTwistDeg*0.38)),
       rotZ(math.rad((-0.30*math.max(0,lArm/18)+0.12*math.max(0,-lArm/18))*blend))
@@ -763,6 +1717,9 @@ local function boneDelta(data, bone, phaseRadians, walkSin, walkCos, bounce, wal
   elseif bone==A.RShoulder then
     if blend<=0.0001 then return nil end
     if data.runtimeProfile=="NARUTO" or data.runtimeProfile=="CJ" then return nil end
+    if data.runtimeProfile=="RED" then
+      return compose(rotY(math.rad(-twist*0.10)), rotZ(math.rad(1.8 + shoulderWave*0.10)))
+    end
     return compose(
       rotY(math.rad(-twist*CONFIG.shoulderTwistDeg/CONFIG.hipTwistDeg*0.38)),
       rotZ(math.rad((0.30*math.max(0,rArm/18)-0.12*math.max(0,-rArm/18))*blend))
@@ -795,6 +1752,11 @@ local function boneDelta(data, bone, phaseRadians, walkSin, walkCos, bounce, wal
       if a < -9 then a=-9 elseif a > 16 then a=16 end
       a=a+2.5
       return compose(rotX(math.rad(a*blend*0.34)),rest)
+    elseif data.runtimeProfile=="RED" then
+      -- Red's bind arms start close to a T-pose, so keep a proper arm-down
+      -- rest orientation and layer the softer human walk swing on top of it.
+      local rest=rotZ(math.rad(-88))
+      return compose(rest, compose(rotY(math.rad(lArm*blend*0.34)), rotX(math.rad(-2.2))))
     end
     return compose(rest,rotY(math.rad(lArm*blend)))
   elseif bone==A.RArm then
@@ -822,6 +1784,9 @@ local function boneDelta(data, bone, phaseRadians, walkSin, walkCos, bounce, wal
       if a < -9 then a=-9 elseif a > 16 then a=16 end
       a=a+2.5
       return compose(rotX(math.rad(-a*blend*0.34)),rest)
+    elseif data.runtimeProfile=="RED" then
+      local rest=rotZ(math.rad(88))
+      return compose(rest, compose(rotY(math.rad(rArm*blend*0.34)), rotX(math.rad(2.2))))
     end
     return compose(rest,rotY(math.rad(rArm*blend)))
   elseif bone==A.LForeArm then
@@ -840,6 +1805,10 @@ local function boneDelta(data, bone, phaseRadians, walkSin, walkCos, bounce, wal
       -- SMD idle confirms the LEFT elbow flexes toward negative local Y.
       local yugiElbow=14+(elbow-12)*0.28
       return rotY(math.rad(-yugiElbow))
+    end
+    if data.runtimeProfile=="RED" then
+      local lag=4.0*math.sin((phase+0.10)*math.pi*2)*blend
+      return compose(rotY(math.rad(-(28 + elbow*0.24))), rotX(math.rad(lag)))
     end
     local pronate=1.25*math.sin((phase+0.47)*math.pi*2)*blend
     return compose(rotY(math.rad(-elbow)),rotX(math.rad(pronate)))
@@ -861,6 +1830,10 @@ local function boneDelta(data, bone, phaseRadians, walkSin, walkCos, bounce, wal
       local yugiElbow=14+(elbow-12)*0.28
       return rotY(math.rad(yugiElbow))
     end
+    if data.runtimeProfile=="RED" then
+      local lag=-4.0*math.sin((opposite+0.10)*math.pi*2)*blend
+      return compose(rotY(math.rad(-(28 + elbow*0.24))), rotX(math.rad(lag)))
+    end
     local pronate=-1.25*math.sin((opposite+0.46)*math.pi*2)*blend
     return compose(rotY(math.rad(-elbow)),rotX(math.rad(pronate)))
   elseif bone==A.LHand then
@@ -877,6 +1850,9 @@ local function boneDelta(data, bone, phaseRadians, walkSin, walkCos, bounce, wal
         rotY(math.rad(lWristYaw*0.22*blend)),
         rotZ(math.rad(-3 + lWristRoll*0.18*blend))
       )
+    end
+    if data.runtimeProfile=="RED" then
+      return compose3(rotX(math.rad(lWristPitch*0.18*blend)), rotY(math.rad(lWristYaw*0.16*blend)), rotZ(math.rad(-2.5 + lWristRoll*0.10*blend)))
     end
     -- Three-axis wrist follow-through plus a tiny natural inward rest angle.
     return compose3(
@@ -898,6 +1874,9 @@ local function boneDelta(data, bone, phaseRadians, walkSin, walkCos, bounce, wal
         rotY(math.rad(-rWristYaw*0.22*blend)),
         rotZ(math.rad(3 - rWristRoll*0.18*blend))
       )
+    end
+    if data.runtimeProfile=="RED" then
+      return compose3(rotX(math.rad(-rWristPitch*0.18*blend)), rotY(math.rad(-rWristYaw*0.16*blend)), rotZ(math.rad(2.5 - rWristRoll*0.10*blend)))
     end
     return compose3(
       rotX(math.rad(-rWristPitch*0.78*blend)),
@@ -1055,6 +2034,54 @@ local function boneDelta(data, bone, phaseRadians, walkSin, walkCos, bounce, wal
   return nil
 end
 
+local function clothSpringStep(node,targetPitch,targetYaw,k,damping,dt)
+  node.p=node.p or 0; node.pv=node.pv or 0
+  node.y=node.y or 0; node.yv=node.yv or 0
+  node.pv=node.pv+(targetPitch-node.p)*k*dt
+  node.yv=node.yv+(targetYaw-node.y)*k*dt
+  local drag=math.exp(-damping*dt)
+  node.pv=node.pv*drag; node.yv=node.yv*drag
+  node.p=node.p+node.pv*dt; node.y=node.y+node.yv*dt
+end
+
+function Renderer:updateBeelCloth(dt,walking)
+  if not self.data or self.data.runtimeProfile~="BEELSTARMON" then return end
+  dt=tonumber(dt) or (1/60)
+  if dt<0 then dt=0 elseif dt>0.05 then dt=0.05 end
+  local C=self.beelCloth
+  if not C then
+    C={ct={},cm={},cb={},lt={},lm={},lb={},rt={},rm={},rb={}}
+    self.beelCloth=C
+  end
+  local speed=tonumber(self.voxelSmoothSpeed) or tonumber(self.motionMeasuredSpeed) or 0
+  if not walking then speed=speed*0.22 end
+  local s=math.max(0,math.min(1.25,speed/78))
+  local prev=self.beelClothSpeed or s
+  local accel=(dt>0.0001) and ((s-prev)/dt) or 0
+  self.beelClothSpeed=s
+  if accel>7 then accel=7 elseif accel<-7 then accel=-7 end
+  local cyclePixels=CONFIG.worldPixelsPerCycle
+  local phase=((self.voxelGaitDistance or self.motionDistance or 0)/cyclePixels)%1
+  local gait=math.sin(phase*math.pi*2)
+  local pulse=math.sin((phase+0.16)*math.pi*2)
+  local kick=accel*0.72
+
+  -- Local-angle targets. Because the cape chains are hierarchical, modest
+  -- per-joint angles accumulate into a broad cloth curve instead of rotating
+  -- the entire garment as one rigid board.
+  clothSpringStep(C.ct, 2.0*s + kick*0.15, 0.45*gait*s, 88,13.5,dt)
+  clothSpringStep(C.cm, 3.8*s + kick*0.30 + C.ct.p*0.16, 0.85*gait*s + C.ct.y*0.18, 58,9.8,dt)
+  clothSpringStep(C.cb, 6.5*s + kick*0.55 + C.cm.p*0.18, 1.55*pulse*s + C.cm.y*0.22, 36,6.8,dt)
+
+  clothSpringStep(C.lt, 2.5*s + kick*0.18, 0.9*gait*s, 76,11.8,dt)
+  clothSpringStep(C.lm, 4.8*s + kick*0.36 + C.lt.p*0.18, 1.8*gait*s + C.lt.y*0.22, 48,8.6,dt)
+  clothSpringStep(C.lb, 8.2*s + kick*0.70 + C.lm.p*0.22, 3.8*pulse*s + C.lm.y*0.25, 28,5.9,dt)
+
+  clothSpringStep(C.rt, 2.5*s + kick*0.18, -0.9*gait*s, 76,11.8,dt)
+  clothSpringStep(C.rm, 4.8*s + kick*0.36 + C.rt.p*0.18, -1.8*gait*s + C.rt.y*0.22, 48,8.6,dt)
+  clothSpringStep(C.rb, 8.2*s + kick*0.70 + C.rm.p*0.22, -3.8*pulse*s + C.rm.y*0.25, 28,5.9,dt)
+end
+
 function Renderer:motionSample(player,px,py,now)
   local walking = (player.moving == true)
       or (player.bumpFrames and player.bumpFrames > 0)
@@ -1103,6 +2130,54 @@ function Renderer:motionSample(player,px,py,now)
   return walking,x,y
 end
 
+local function smooth01(x)
+  if x<=0 then return 0 elseif x>=1 then return 1 end
+  return x*x*(3-2*x)
+end
+
+function Renderer:belleRunTarget(player,walking)
+  if self.characterId~="BELLESTARMON" or not walking then return 0 end
+  local x=tonumber(player and player.red3dMoveStickX) or 0
+  local y=tonumber(player and player.red3dMoveStickY) or 0
+  local mag=math.sqrt(x*x+y*y)
+  if mag>1 then mag=1 end
+  local analog=(player and player.red3dAnalogMoveActive==true and mag>0.08)
+  if not analog then
+    -- Keyboard/D-pad movement has no analog magnitude, so it remains Fast Run.
+    return 1
+  end
+  local start=CONFIG.belleRunBlendStart or 0.55
+  local full=CONFIG.belleRunBlendFull or 0.92
+  if mag<=start then return 0 end
+  if mag>=full then return 1 end
+  return smooth01((mag-start)/(full-start))
+end
+
+function Renderer:updateBelleLocomotion(player,walking,dt)
+  if self.characterId~="BELLESTARMON" then return end
+  local target=self:belleRunTarget(player,walking)
+  self.belleRunBlend=approachExp(self.belleRunBlend or 0,target,CONFIG.belleRunBlendRate or 7.5,dt or (1/60))
+  if self.belleRunBlend<0.0001 then self.belleRunBlend=0 elseif self.belleRunBlend>0.9999 then self.belleRunBlend=1 end
+  self.data.runtimeBelleRunBlend=self.belleRunBlend
+  local x=tonumber(player and player.red3dMoveStickX) or 0
+  local y=tonumber(player and player.red3dMoveStickY) or 0
+  self.data.runtimeBelleAnalogMagnitude=math.min(1,math.sqrt(x*x+y*y))
+end
+
+function Renderer:cyclePixels()
+  if self.characterId=="BELLESTARMON" then
+    local rb=self.belleRunBlend or 0
+    if rb<0 then rb=0 elseif rb>1 then rb=1 end
+    return (CONFIG.belleWalkCyclePixels or 72.0) + ((CONFIG.belleRunCyclePixels or 31.0)-(CONFIG.belleWalkCyclePixels or 72.0))*rb
+  end
+  if self.data and self.data.runtimeProfile=="RED" then return 34.0 end
+  if self.data and self.data.runtimeProfile=="ASH" then return 43.0 end
+  if self.data and self.data.runtimeProfile=="BEELSTARMON_MIXAMO" then return 31.0 end
+  if self.data and self.data.runtimeProfile=="AANG_MIXAMO" then return 28.0 end
+  if self.data and self.data.runtimeProfile=="NARUTO_MIXAMO" then return 22.0 end
+  return CONFIG.worldPixelsPerCycle
+end
+
 function Renderer:beginVoxelFrame(player,p)
   if not player or not p then return end
 
@@ -1111,10 +2186,44 @@ function Renderer:beginVoxelFrame(player,p)
   local rawWalking=self:motionSample(player,p.px,p.py,now)
 
   if not now then
-    local phase=(self.motionDistance/CONFIG.worldPixelsPerCycle)%1
+    if self.data and self.data.runtimeProfile=="ASH" then
+      self.ashIdleTime=(self.ashIdleTime or 0)+(1/60)
+      local dur=tonumber(self.data.idleDuration) or 1
+      if dur<=0 then dur=1 end
+      self.data.runtimeAshIdlePhase=(self.ashIdleTime/dur)%1
+    elseif self.data and self.data.runtimeProfile=="AANG_MIXAMO" then
+      self.aangIdleTime=(self.aangIdleTime or 0)+(1/60)
+      local dur=tonumber(self.data.idleDuration) or 1
+      if dur<=0 then dur=1 end
+      self.data.runtimeAangIdlePhase=(self.aangIdleTime/dur)%1
+    elseif self.data and self.data.runtimeProfile=="CJ_FBX" then
+      self.cjIdleTime=(self.cjIdleTime or 0)+(1/60)
+      local dur=tonumber(self.data.idleDuration) or 1
+      if dur<=0 then dur=1 end
+      self.data.runtimeCJIdlePhase=(self.cjIdleTime/dur)%1
+    elseif self.data and self.data.runtimeProfile=="YAMI_FBX" then
+      self.yamiIdleTime=(self.yamiIdleTime or 0)+(1/60)
+      local dur=tonumber(self.data.idleDuration) or 1
+      if dur<=0 then dur=1 end
+      self.data.runtimeYamiIdlePhase=(self.yamiIdleTime/dur)%1
+    elseif self.data and self.data.runtimeProfile=="BEELSTARMON_MIXAMO" then
+      self.beelIdleTime=(self.beelIdleTime or 0)+(1/60)
+      local dur=tonumber(self.data.idleDuration) or 1
+      if dur<=0 then dur=1 end
+      self.data.runtimeBeelIdlePhase=(self.beelIdleTime/dur)%1
+    elseif self.data and self.data.runtimeProfile=="NARUTO_MIXAMO" then
+      self.narutoIdleTime=(self.narutoIdleTime or 0)+(1/60)
+      local dur=tonumber(self.data.idleDuration) or 1
+      if dur<=0 then dur=1 end
+      self.data.runtimeNarutoIdlePhase=(self.narutoIdleTime/dur)%1
+    end
+    self:updateBelleLocomotion(player,rawWalking,1/60)
+    local cyclePixels=self:cyclePixels()
+    local phase=(self.characterId=="BELLESTARMON") and (self.belleGaitPhase or 0) or ((self.motionDistance/cyclePixels)%1)
     self.voxelFrameWalking=rawWalking
     self.voxelFrameBlend=rawWalking and 1 or 0
     self.voxelFrameClock=phase*16
+    self:updateBeelCloth(1/60,rawWalking)
     self.voxelFrameSerial=self.voxelFrameSerial+1
     self.voxelFrameKey="vf_fallback"..tostring(self.voxelFrameSerial)
     return
@@ -1129,6 +2238,37 @@ function Renderer:beginVoxelFrame(player,p)
   if dt < 0 then dt=0 end
   if dt > 0.10 then dt=0.10 end
   self.voxelLastTime=now
+  if self.data and self.data.runtimeProfile=="ASH" then
+    self.ashIdleTime=(self.ashIdleTime or 0)+dt
+    local dur=tonumber(self.data.idleDuration) or 1
+    if dur<=0 then dur=1 end
+    self.data.runtimeAshIdlePhase=(self.ashIdleTime/dur)%1
+  elseif self.data and self.data.runtimeProfile=="AANG_MIXAMO" then
+    self.aangIdleTime=(self.aangIdleTime or 0)+dt
+    local dur=tonumber(self.data.idleDuration) or 1
+    if dur<=0 then dur=1 end
+    self.data.runtimeAangIdlePhase=(self.aangIdleTime/dur)%1
+  elseif self.data and self.data.runtimeProfile=="CJ_FBX" then
+    self.cjIdleTime=(self.cjIdleTime or 0)+dt
+    local dur=tonumber(self.data.idleDuration) or 1
+    if dur<=0 then dur=1 end
+    self.data.runtimeCJIdlePhase=(self.cjIdleTime/dur)%1
+  elseif self.data and self.data.runtimeProfile=="YAMI_FBX" then
+    self.yamiIdleTime=(self.yamiIdleTime or 0)+dt
+    local dur=tonumber(self.data.idleDuration) or 1
+    if dur<=0 then dur=1 end
+    self.data.runtimeYamiIdlePhase=(self.yamiIdleTime/dur)%1
+  elseif self.data and self.data.runtimeProfile=="BEELSTARMON_MIXAMO" then
+    self.beelIdleTime=(self.beelIdleTime or 0)+dt
+    local dur=tonumber(self.data.idleDuration) or 1
+    if dur<=0 then dur=1 end
+    self.data.runtimeBeelIdlePhase=(self.beelIdleTime/dur)%1
+  elseif self.data and self.data.runtimeProfile=="NARUTO_MIXAMO" then
+    self.narutoIdleTime=(self.narutoIdleTime or 0)+dt
+    local dur=tonumber(self.data.idleDuration) or 1
+    if dur<=0 then dur=1 end
+    self.data.runtimeNarutoIdlePhase=(self.narutoIdleTime/dur)%1
+  end
 
   if rawWalking then self.voxelLastMovingTime=now end
 
@@ -1138,6 +2278,8 @@ function Renderer:beginVoxelFrame(player,p)
       and (now-self.voxelLastMovingTime) <= CONFIG.seamGrace then
     walking=true
   end
+
+  self:updateBelleLocomotion(player,walking,dt)
 
   local targetSpeed=0
   if walking then
@@ -1178,19 +2320,33 @@ function Renderer:beginVoxelFrame(player,p)
   -- blend is still almost zero.  This avoids fading into an arbitrary mid-air
   -- pose left over from the previous jog.
   if walking and not self.voxelWasMoving and (self.voxelMoveBlend or 0) < 0.20 then
-    local cycle=math.floor((self.voxelGaitDistance or 0)/CONFIG.worldPixelsPerCycle)
-    self.voxelGaitDistance=cycle*CONFIG.worldPixelsPerCycle
+    if self.characterId=="BELLESTARMON" then
+      self.belleGaitPhase=0
+    else
+      local cyclePixels=self:cyclePixels()
+      local cycle=math.floor((self.voxelGaitDistance or 0)/cyclePixels)
+      self.voxelGaitDistance=cycle*cyclePixels
+    end
   end
   self.voxelWasMoving=walking
 
   if (self.voxelMoveBlend or 0) > 0.001 then
-    self.voxelGaitDistance=self.voxelGaitDistance + (self.voxelSmoothSpeed or 0)*dt
+    local advance=(self.voxelSmoothSpeed or 0)*dt
+    self.voxelGaitDistance=self.voxelGaitDistance + advance
+    if self.characterId=="BELLESTARMON" then
+      local cyclePixels=self:cyclePixels()
+      if cyclePixels<1 then cyclePixels=1 end
+      self.belleGaitPhase=((self.belleGaitPhase or 0) + advance/cyclePixels)%1
+    end
   end
 
   self.voxelFrameWalking=(self.voxelMoveBlend or 0) > 0.001
   self.voxelFrameBlend=self.voxelMoveBlend or 0
+  self:updateBeelCloth(dt,self.voxelFrameWalking)
   self.voxelFrameSerial=self.voxelFrameSerial+1
-  self.voxelFrameClock=((self.voxelGaitDistance/CONFIG.worldPixelsPerCycle)%1)*16
+  local cyclePixels=self:cyclePixels()
+  local gaitPhase=(self.characterId=="BELLESTARMON") and (self.belleGaitPhase or 0) or ((self.voxelGaitDistance/cyclePixels)%1)
+  self.voxelFrameClock=gaitPhase*16
   self.voxelFrameKey=string.format("vf%d_%.3f",self.voxelFrameSerial,self.voxelFrameBlend)
 end
 
@@ -1200,7 +2356,9 @@ function Renderer:animationState(player,px,py)
 
   -- Non-voxel fallback remains deterministic and distance-locked.  The voxel
   -- pipeline uses beginVoxelFrame() above for sub-frame interpolation.
-  local phase=(self.motionDistance/CONFIG.worldPixelsPerCycle)%1
+  if self.characterId=="BELLESTARMON" then self:updateBelleLocomotion(player,walking,1/60) end
+  local cyclePixels=self:cyclePixels()
+  local phase=(self.motionDistance/cyclePixels)%1
   local clock=phase*16
   return true,clock,string.format("move%.5f",phase)
 end
@@ -1213,6 +2371,7 @@ function Renderer:updateSkeleton(player,walking,clock,motionBlend)
   local bounce=0.5-0.5*math.cos(phase*2)
   local jumpT=jumpProgress(player)
   local shootT=shootProgress(player)
+  if d.runtimeProfile=="BEELSTARMON" then d.runtimeCloth=self.beelCloth end
 
   for i=1,d.boneCount do
     local bind=self.bindLocal[i]
@@ -1231,11 +2390,27 @@ function Renderer:updateSkeleton(player,walking,clock,motionBlend)
         delta=boneDelta(d,i,phase,walkSin,walkCos,bounce,walking,math.min(motionBlend or 0,0.08))
       end
     elseif jumpT then
-      delta=jumpBoneDelta(d,i,jumpT)
-      -- Keep the refined relaxed hands/fingers and backpack alive during the
-      -- hop when the dedicated jump pose does not override that bone.
-      if not delta then
-        delta=boneDelta(d,i,phase,walkSin,walkCos,bounce,walking,0.22)
+      if d.runtimeProfile=="ASH" then
+        delta=ashJumpDelta(d,i,jumpT,wrap01(phase/(math.pi*2)),motionBlend or 0)
+      elseif self.characterId=="BELLESTARMON" then
+        delta=belleJumpDelta(d,i,jumpT,wrap01(phase/(math.pi*2)),motionBlend or 0)
+      elseif d.runtimeProfile=="AANG_MIXAMO" then
+        delta=aangJumpDelta(d,i,jumpT,wrap01(phase/(math.pi*2)),motionBlend or 0)
+      elseif d.runtimeProfile=="CJ_FBX" then
+        delta=cjJumpDelta(d,i,jumpT,wrap01(phase/(math.pi*2)),motionBlend or 0)
+      elseif d.runtimeProfile=="YAMI_FBX" then
+        delta=yamiJumpDelta(d,i,jumpT,wrap01(phase/(math.pi*2)),motionBlend or 0)
+      elseif d.runtimeProfile=="NARUTO_MIXAMO" then
+        delta=narutoJumpDelta(d,i,jumpT,wrap01(phase/(math.pi*2)),motionBlend or 0)
+      elseif d.runtimeProfile=="BEELSTARMON_MIXAMO" then
+        delta=beelJumpDelta(d,i,jumpT,wrap01(phase/(math.pi*2)),motionBlend or 0)
+      else
+        delta=jumpBoneDelta(d,i,jumpT)
+        -- Keep the refined relaxed hands/fingers and backpack alive during the
+        -- hop when the dedicated jump pose does not override that bone.
+        if not delta then
+          delta=boneDelta(d,i,phase,walkSin,walkCos,bounce,walking,0.22)
+        end
       end
     else
       delta=boneDelta(d,i,phase,walkSin,walkCos,bounce,walking,motionBlend)
@@ -1278,17 +2453,45 @@ end
 
 function Renderer:skin()
   local d=self.data
+  -- Hot-loop localization matters on the large imported rigs. Avoid repeated
+  -- table-field lookups and handle the common 1/2-influence vertices directly;
+  -- Yami has more than 22k positions in those two fast paths alone.
+  local posFirst,posCount=d.posFirst,d.posCount
+  local infBone,infX,infY,infZ,infW=d.infBone,d.infX,d.infY,d.infZ,d.infW
+  local world=self.world
+  local sx,sy,sz=self.sx,self.sy,self.sz
+  local zUp=self.postSkinZUp
+  local tp=transformPoint
   for i=1,d.positionCount do
-    local x,y,z=0,0,0
-    local first=d.posFirst[i]
-    local count=d.posCount[i]
-    for j=first,first+count-1 do
-      local m=self.world[d.infBone[j]]
-      local tx,ty,tz=transformPoint(m,d.infX[j],d.infY[j],d.infZ[j])
-      local w=d.infW[j]
-      x=x+tx*w; y=y+ty*w; z=z+tz*w
+    local first=posFirst[i]
+    local count=posCount[i]
+    local x,y,z
+    if count==1 then
+      local j=first
+      local tx,ty,tz=tp(world[infBone[j]],infX[j],infY[j],infZ[j])
+      local w=infW[j]
+      x,y,z=tx*w,ty*w,tz*w
+    elseif count==2 then
+      local j1,j2=first,first+1
+      local tx1,ty1,tz1=tp(world[infBone[j1]],infX[j1],infY[j1],infZ[j1])
+      local tx2,ty2,tz2=tp(world[infBone[j2]],infX[j2],infY[j2],infZ[j2])
+      local w1,w2=infW[j1],infW[j2]
+      x=tx1*w1+tx2*w2
+      y=ty1*w1+ty2*w2
+      z=tz1*w1+tz2*w2
+    else
+      x,y,z=0,0,0
+      for j=first,first+count-1 do
+        local tx,ty,tz=tp(world[infBone[j]],infX[j],infY[j],infZ[j])
+        local w=infW[j]
+        x=x+tx*w; y=y+ty*w; z=z+tz*w
+      end
     end
-    self.sx[i],self.sy[i],self.sz[i]=x,y,z
+    if zUp then
+      -- Some imported GTA/FBX rigs are skinned in Z-up source space.
+      x,y,z=x,z,-y
+    end
+    sx[i],sy[i],sz[i]=x,y,z
   end
 end
 
@@ -1305,6 +2508,85 @@ function Renderer:ensureSkinned(player,px,py,useVoxelFrame)
   end
   local jumpT=jumpProgress(player)
   if jumpT then key=key..string.format("_hop%.4f",jumpT) end
+  if not useVoxelFrame and self.data and self.data.runtimeProfile=="ASH" then
+    local now=(love and love.timer and love.timer.getTime) and love.timer.getTime() or nil
+    local dt=1/60
+    if now and self.ashIdleLastTime then dt=now-self.ashIdleLastTime end
+    if dt<0 then dt=0 elseif dt>0.10 then dt=0.10 end
+    if now then self.ashIdleLastTime=now end
+    self.ashIdleTime=(self.ashIdleTime or 0)+dt
+    local dur=tonumber(self.data.idleDuration) or 1
+    if dur<=0 then dur=1 end
+    self.data.runtimeAshIdlePhase=(self.ashIdleTime/dur)%1
+    key=key..string.format("_idle%.3f",self.data.runtimeAshIdlePhase)
+  end
+  if not useVoxelFrame and self.data and self.data.runtimeProfile=="AANG_MIXAMO" then
+    local now=(love and love.timer and love.timer.getTime) and love.timer.getTime() or nil
+    local dt=1/60
+    if now and self.aangIdleLastTime then dt=now-self.aangIdleLastTime end
+    if dt<0 then dt=0 elseif dt>0.10 then dt=0.10 end
+    if now then self.aangIdleLastTime=now end
+    self.aangIdleTime=(self.aangIdleTime or 0)+dt
+    local dur=tonumber(self.data.idleDuration) or 1
+    if dur<=0 then dur=1 end
+    self.data.runtimeAangIdlePhase=(self.aangIdleTime/dur)%1
+    key=key..string.format("_aangidle%.3f",self.data.runtimeAangIdlePhase)
+  end
+  if not useVoxelFrame and self.data and self.data.runtimeProfile=="CJ_FBX" then
+    local now=(love and love.timer and love.timer.getTime) and love.timer.getTime() or nil
+    local dt=1/60
+    if now and self.cjIdleLastTime then dt=now-self.cjIdleLastTime end
+    if dt<0 then dt=0 elseif dt>0.10 then dt=0.10 end
+    if now then self.cjIdleLastTime=now end
+    self.cjIdleTime=(self.cjIdleTime or 0)+dt
+    local dur=tonumber(self.data.idleDuration) or 1
+    if dur<=0 then dur=1 end
+    self.data.runtimeCJIdlePhase=(self.cjIdleTime/dur)%1
+    key=key..string.format("_cjidle%.3f",self.data.runtimeCJIdlePhase)
+  end
+  if not useVoxelFrame and self.data and self.data.runtimeProfile=="YAMI_FBX" then
+    local now=(love and love.timer and love.timer.getTime) and love.timer.getTime() or nil
+    local dt=1/60
+    if now and self.yamiIdleLastTime then dt=now-self.yamiIdleLastTime end
+    if dt<0 then dt=0 elseif dt>0.10 then dt=0.10 end
+    if now then self.yamiIdleLastTime=now end
+    self.yamiIdleTime=(self.yamiIdleTime or 0)+dt
+    local dur=tonumber(self.data.idleDuration) or 1
+    if dur<=0 then dur=1 end
+    self.data.runtimeYamiIdlePhase=(self.yamiIdleTime/dur)%1
+    key=key..string.format("_yamiidle%.3f",self.data.runtimeYamiIdlePhase)
+  end
+  if not useVoxelFrame and self.data and self.data.runtimeProfile=="NARUTO_MIXAMO" then
+    local now=(love and love.timer and love.timer.getTime) and love.timer.getTime() or nil
+    local dt=1/60
+    if now and self.narutoIdleLastTime then dt=now-self.narutoIdleLastTime end
+    if dt<0 then dt=0 elseif dt>0.10 then dt=0.10 end
+    if now then self.narutoIdleLastTime=now end
+    self.narutoIdleTime=(self.narutoIdleTime or 0)+dt
+    local dur=tonumber(self.data.idleDuration) or 1
+    if dur<=0 then dur=1 end
+    self.data.runtimeNarutoIdlePhase=(self.narutoIdleTime/dur)%1
+    key=key..string.format("_narutoidle%.3f",self.data.runtimeNarutoIdlePhase)
+  end
+  if not useVoxelFrame and self.data and self.data.runtimeProfile=="BEELSTARMON_MIXAMO" then
+    local now=(love and love.timer and love.timer.getTime) and love.timer.getTime() or nil
+    local dt=1/60
+    if now and self.beelIdleLastTime then dt=now-self.beelIdleLastTime end
+    if dt<0 then dt=0 elseif dt>0.10 then dt=0.10 end
+    if now then self.beelIdleLastTime=now end
+    self.beelIdleTime=(self.beelIdleTime or 0)+dt
+    local dur=tonumber(self.data.idleDuration) or 1
+    if dur<=0 then dur=1 end
+    self.data.runtimeBeelIdlePhase=(self.beelIdleTime/dur)%1
+    key=key..string.format("_beelidle%.3f",self.data.runtimeBeelIdlePhase)
+  end
+  if not useVoxelFrame and self.data and self.data.runtimeProfile=="BEELSTARMON" then
+    local now=(love and love.timer and love.timer.getTime) and love.timer.getTime() or nil
+    local dt=1/60
+    if now and self.beelClothLastTime then dt=now-self.beelClothLastTime end
+    if now then self.beelClothLastTime=now end
+    self:updateBeelCloth(dt,walking)
+  end
   if key==self.skinKey then return key end
   self:updateSkeleton(player,walking,clock,motionBlend)
   self:skin()
@@ -1335,10 +2617,9 @@ function Renderer:project(px,py,camX,camY,facing)
 end
 
 function Renderer:updateMesh(facing)
-  local d=self.data
   local rows=self.vertexRows
-  for i=1,d.cornerCount do
-    local p=d.cornerPos[i]
+  for i=1,self.renderVertexCount do
+    local p=self.vertexPos[i]
     local row=rows[i]
     row[1]=self.screenX[p]
     row[2]=self.screenY[p]
@@ -1382,10 +2663,9 @@ function Renderer:updateVoxelMesh(player,p,Voxel3D)
   local key=self:ensureSkinned(player,p and p.px,p and p.py,true)
   if key==self.voxelUploadedKey then return true end
 
-  local d=self.data
   local rows=self.voxelRows
-  for i=1,d.cornerCount do
-    local p=d.cornerPos[i]
+  for i=1,self.renderVertexCount do
+    local p=self.vertexPos[i]
     local row=rows[i]
     row[1]=self.sx[p]
     row[2]=self.sy[p]
@@ -1402,59 +2682,62 @@ function Renderer:updateVoxelMesh(player,p,Voxel3D)
 end
 
 function Renderer:voxelModelMatrix(player,p,Mat4,FirstPerson)
-  -- Dramatic Shape's 3RD free-walk normally points a standing body back at
-  -- the camera every frame.  For a real 3D model that feels like the classic
-  -- "snap forward" problem: walk diagonally, release the stick, orbit the
-  -- camera, and the character instantly forgets the direction they were
-  -- actually facing.  Keep the last continuous travel bearing instead.
+  -- True 360-degree travel-facing for the real 3D body.
   --
-  -- While movement input is held we still trust Dramatic Shape's exact
-  -- continuous bodyYaw, so 360-degree diagonal movement remains native.
-  -- When input returns to zero, the model keeps that last bearing while the
-  -- camera can orbit independently.  Grid/orbit mode and scripted movement
-  -- still fall back to the engine's normal p.facing semantics.
-  local liveYaw=FirstPerson and FirstPerson.bodyYaw or nil
-  if player and FirstPerson and liveYaw~=nil then
-    local engaged=true
-    if type(FirstPerson.engaged)=="function" then
-      local ok,v=pcall(FirstPerson.engaged)
-      engaged=ok and v or false
-    end
+  -- Do not depend on Dramatic Shape's bodyYaw here: that value intentionally
+  -- returns to camera-forward while standing. Also do not depend solely on
+  -- moveVector(), because older/newer Dramatic Shape builds can expose the
+  -- private FirstPerson module differently through the bridge. Instead use
+  -- the player's ACTUAL world-space displacement, which is the final truth
+  -- after camera-relative input, collision sliding, keyboard, analog stick,
+  -- touch input, etc.
+  --
+  -- A moving player updates the continuous yaw from delta-X/delta-Z. When the
+  -- player stops, the last yaw is retained exactly, so orbiting the camera does
+  -- not snap the body forward. Large discontinuities are treated as warps and
+  -- do not make the model face along the teleport vector.
+  local liveYaw=nil
+  if player and p then
+    local x=tonumber(p.px) or 0
+    local z=tonumber(p.py) or 0
+    local lx=player.red3dLastWorldX
+    local lz=player.red3dLastWorldZ
 
-    if engaged then
-      local moving=false
-      if type(FirstPerson.moveVector)=="function" then
-        local ok,mx,mz=pcall(FirstPerson.moveVector)
-        if ok then
-          mx=tonumber(mx) or 0
-          mz=tonumber(mz) or 0
-          moving=(mx*mx+mz*mz)>0.0004
-        end
-      elseif player.moving then
-        moving=true
-      end
-
-      if moving then
+    if lx~=nil and lz~=nil then
+      local dx=x-lx
+      local dz=z-lz
+      local d2=dx*dx+dz*dz
+      -- Tiny threshold rejects floating-point jitter. 64 px^2 rejects a
+      -- one-cell/warp discontinuity while comfortably accepting free-walk
+      -- subpixel motion at any angle.
+      if d2>0.000001 and d2<64 then
+        liveYaw=atan2(dx,dz)
         player.red3dFreeBodyYaw=liveYaw
-      else
-        if player.red3dFreeBodyYaw==nil then
-          player.red3dFreeBodyYaw=YAW[p.facing] or liveYaw
-        end
-        liveYaw=player.red3dFreeBodyYaw
       end
-    else
-      player.red3dFreeBodyYaw=nil
     end
-  elseif player then
-    -- bodyYaw becomes nil when free walk releases control (scripts/cutscenes
-    -- or leaving 1ST/3RD).  Do not carry our visual bearing into those modes.
-    player.red3dFreeBodyYaw=nil
+
+    -- Only advance the sampled position when it really changed. drawVoxel and
+    -- drawVoxelShadow can both ask for a model matrix in the same frame; this
+    -- keeps the shadow pass from turning a valid movement delta into a zero one.
+    if lx==nil or lz==nil or x~=lx or z~=lz then
+      player.red3dLastWorldX=x
+      player.red3dLastWorldZ=z
+    end
+
+    if liveYaw==nil then
+      if player.red3dFreeBodyYaw==nil then
+        player.red3dFreeBodyYaw=YAW[p.facing] or (FirstPerson and tonumber(FirstPerson.yaw)) or 0
+      end
+      liveYaw=player.red3dFreeBodyYaw
+    end
   end
 
+  -- CJ aiming remains an explicit body-facing override while ADS.
   if self.characterId=="CJ" and player and player.red3dADS and player.red3dAimBodyYaw~=nil then
     liveYaw=player.red3dAimBodyYaw
     player.red3dFreeBodyYaw=liveYaw
   end
+
   local yaw=(liveYaw or YAW[p.facing] or 0)+self.modelYawOffset
   local m=Mat4.translate(p.px+8,p.gh+(p.lift or 0)+manualJumpLift(player)+CONFIG.groundClearance,p.py+8)
   if yaw~=0 then m=Mat4.mul(m,Mat4.rotateY(yaw)) end
@@ -1467,6 +2750,12 @@ function Renderer:drawVoxel(player,p,Voxel3D,Mat4,FirstPerson)
   if self.voxelFailed or playerUsesSpecialCard(player) then return false end
   if not self:updateVoxelMesh(player,p,Voxel3D) then return false end
   local model=self:voxelModelMatrix(player,p,Mat4,FirstPerson)
+  -- Custom character UVs are unrelated to Dramatic Shape's tileset atlas.
+  -- Its glass mask intentionally paints matching atlas coordinates with warm
+  -- window lamplight at night, which shows up as random yellow polygons on
+  -- imported models. Force that tileset-only effect OFF at the actual custom
+  -- mesh draw rather than trying to edit the character texture around it.
+  if Voxel3D.glass then pcall(Voxel3D.glass,false) end
   -- Real geometry does not need the camera-ward depth pull used to make a
   -- leaning sprite card win against the wall it visually leans over.
   Voxel3D.draw(self.voxelMesh,self.image,model,nil,model)
@@ -1592,7 +2881,15 @@ function Renderer:updateBattleSkeleton(amount)
   local d=self.data
   for i=1,d.boneCount do
     local bind=self.bindLocal[i]
-    local delta=battlePointDelta(d,i,amount)
+    local delta
+    if d.runtimeProfile=="AANG_MIXAMO" then
+      -- The replacement Aang ships with an authored Standing Idle. Keep that
+      -- exact pose in the trainer battle intro instead of feeding the new
+      -- Mixamo armature through the legacy Red/Aang pointing transforms.
+      delta=aangIdleDelta(d,i)
+    else
+      delta=battlePointDelta(d,i,amount)
+    end
 
     -- Keep Aang completely out of the generic trainer pointing arm chain.
     -- This deliberately favors a stable, natural arms-down stance over the
@@ -1674,10 +2971,9 @@ function Renderer:prepareBattleMesh(player,Voxel3D,pointAmount)
     player.hopFrames=oldHop
     player.red3dManualJumpFrames=oldManual
   end
-  local d=self.data
   local rows=self.voxelRows
-  for i=1,d.cornerCount do
-    local pos=d.cornerPos[i]
+  for i=1,self.renderVertexCount do
+    local pos=self.vertexPos[i]
     local row=rows[i]
     row[1]=self.sx[pos]
     row[2]=self.sy[pos]
@@ -2297,6 +3593,7 @@ local function installVoxelBridge(mod,renderer)
           local oldShadowDraw=(okS and type(ShadowMap)=="table") and ShadowMap.draw or nil
           Voxel3D.draw=function(mesh,tex,model,pull,shadowModel,...)
             if tex==trainerCanvas then
+              if Voxel3D.glass then pcall(Voxel3D.glass,false) end
               return oldVoxelDraw(renderer.voxelMesh,renderer.image,battleModel,nil,battleModel,...)
             end
             return oldVoxelDraw(mesh,tex,model,pull,shadowModel,...)
@@ -2339,22 +3636,26 @@ end
 
 return function(mod)
   local CHARACTER_DEFS = {
-    RED = { id="RED", label="Red", data="data/model.lua", atlas="assets/red_atlas.png", height=27 },
+    RED = { id="RED", label="Red", data="data/model.lua", atlas="assets/red_atlas.png", height=18.984375, profile="RED" },
     YUGI = { id="YUGI", label="Yugi Muto", data="data/yugi_model.lua", atlas="assets/yugi_atlas.png", height=25, profile="YUGI", armRestDeg=62 },
-    NARUTO = { id="NARUTO", label="Naruto", data="data/naruto_model.lua", atlas="assets/naruto_atlas.png", height=25, profile="NARUTO", armRestDeg=70 },
-    ZORO = { id="ZORO", label="Roronoa Zoro", data="data/zoro_model.lua", atlas="assets/zoro_atlas.png", height=26, profile="GENERIC", armRestDeg=92, modelYawOffset=3.14159265 },
+    NARUTO = { id="NARUTO", label="Naruto", data="data/naruto_model.lua", atlas="assets/naruto_atlas_open.png", atlasFrames={"assets/naruto_atlas_open.png","assets/naruto_atlas_close00.png"}, dynamicAtlas="blink", height=20.5, profile="NARUTO_MIXAMO", armRestDeg=0, modelYawOffset=3.14159265 },
+    ZORO = { id="ZORO", label="Roronoa Zoro", data="data/zoro_model.lua", atlas="assets/zoro_atlas.png", height=26, profile="AANG_MIXAMO", armRestDeg=0, modelYawOffset=0, postSkinZUp=true },
     CLOUD = { id="CLOUD", label="Cloud", data="data/cloud_model.lua", atlas="assets/cloud_atlas.png", height=20, profile="CLOUD", armRestDeg=0 },
-    AANG = { id="AANG", label="Aang", data="data/aang_model.lua", atlas="assets/aang_atlas.png", height=25, profile="AANG", armRestDeg=0 },
-    CJ = { id="CJ", label="Carl Johnson (CJ)", data="data/cj_model.lua", atlas="assets/cj_atlas.png", height=27, profile="CJ", armRestDeg=90 },
+    AANG = { id="AANG", label="Aang", data="data/aang_model.lua", atlas="assets/aang_atlas.png", height=18.5, profile="AANG_MIXAMO", armRestDeg=0, modelYawOffset=0 },
+    CJ = { id="CJ", label="Carl Johnson (CJ)", data="data/cj_model.lua", atlas="assets/cj_atlas.png", height=27, profile="CJ_FBX", armRestDeg=0, modelYawOffset=0, postSkinZUp=true },
+    YAMI = { id="YAMI", label="Yami", data="data/yami_model.lua", atlas="assets/yami_atlas.png", height=24.5, profile="YAMI_FBX", armRestDeg=0, modelYawOffset=0, postSkinZUp=true },
+    BELLESTARMON = { id="BELLESTARMON", label="BelleStarmon", data="data/bellestarmon_model.lua", atlas="assets/bellestarmon_atlas.png", height=27, profile="AANG_MIXAMO", armRestDeg=0, modelYawOffset=3.14159265 },
+    SHREK = { id="SHREK", label="Shrek", data="data/shrek_model.lua", atlas="assets/shrek_atlas.png", height=29, profile="AANG_MIXAMO", armRestDeg=0, modelYawOffset=0 },
+        ASH = { id="ASH", label="Ash Ketchum", data="data/ash_model.lua", atlas="assets/ash_atlas.png", height=19.5, profile="ASH", armRestDeg=0, modelYawOffset=0 },
   }
-  local CHARACTER_ORDER = { "RED", "YUGI", "NARUTO", "ZORO", "CLOUD", "AANG", "CJ" }
+  local CHARACTER_ORDER = { "RED", "YUGI", "YAMI", "BELLESTARMON", "NARUTO", "ZORO", "CLOUD", "AANG", "CJ", "SHREK", "ASH" }
 
   -- Player-facing settings remain available in the mod manager, while the
   -- same character choice is also exposed as a proper pause/start-menu screen.
   if mod.options and mod.options.define then
     mod.options:define({
       { key = "character_3d", type = "choice", label = "CHARACTER", default = "RED",
-        choices = { {"RED","RED"}, {"YUGI MUTO","YUGI"}, {"NARUTO","NARUTO"}, {"RORONOA ZORO","ZORO"}, {"CLOUD","CLOUD"}, {"AANG","AANG"}, {"CARL JOHNSON (CJ)","CJ"} } },
+        choices = { {"RED","RED"}, {"YUGI MUTO","YUGI"}, {"YAMI","YAMI"}, {"BELLESTARMON","BELLESTARMON"}, {"NARUTO","NARUTO"}, {"RORONOA ZORO","ZORO"}, {"CLOUD","CLOUD"}, {"AANG","AANG"}, {"CARL JOHNSON (CJ)","CJ"}, {"SHREK","SHREK"}, {"ASH KETCHUM","ASH"} } },
       { key = "manual_jump", type = "toggle", label = "MANUAL JUMP", default = true },
     })
   end
@@ -2422,33 +3723,340 @@ return function(mod)
   local CHARACTER_SCREEN = "RED3D_CHARACTER_SELECTOR"
   local SKIN_SELECTOR_LABEL = "Skin Selector"
 
-  -- Register this exactly like Gen1Recomp Tutorial 11's custom UI screen.
-  -- Do not guard on proxy members: the API guarantees the screens registry
-  -- for an API-2 content mod, and direct registration makes failures visible
-  -- instead of silently skipping the screen.
+  -- v2.8.68 ports the proven Stadium UI Model Viewer rendering architecture to
+  -- the Skin Selector: render the highlighted character into a transparent
+  -- off-screen Voxel3D scene, bypass PaletteFX for that true-color draw, then
+  -- restore every graphics/voxel state immediately. Unlike the Pokedex viewer
+  -- we own this screen, so no sprite-ID/draw interception is necessary.
+  local function loadLocalModule(path)
+    local src,err=mod:read(path)
+    if not src then mod.log:error("Skin Selector viewer missing %s: %s",tostring(path),tostring(err)); return nil end
+    local fn,e=load(src,"@"..tostring(mod.path or mod.id).."/"..path)
+    if not fn then mod.log:error("Skin Selector viewer compile failed: %s",tostring(e)); return nil end
+    local ok,result=pcall(fn)
+    if not ok then mod.log:error("Skin Selector viewer load failed: %s",tostring(result)); return nil end
+    return result
+  end
+
+  local SkinSelectorViewer=loadLocalModule("lib/SkinSelectorModelViewer.lua")
+
+  local SELECTOR_NAMES={
+    RED="RED", YUGI="YUGI", YAMI="YAMI", BELLESTARMON="BELLE",
+    NARUTO="NARUTO", ZORO="ZORO", CLOUD="CLOUD", AANG="AANG",
+    CJ="CJ", SHREK="SHREK", ASH="ASH",
+  }
+
+  local function viewportRect(viewport)
+    if viewport and viewport.fullSafe then
+      local safe=viewport.fullSafe
+      return tonumber(safe.x) or 0,tonumber(safe.y) or 0,
+        math.max(1,tonumber(safe.width) or 1),math.max(1,tonumber(safe.height) or 1)
+    end
+    if viewport and viewport.safe then
+      local safe=viewport.safe
+      return tonumber(safe.x) or 0,tonumber(safe.y) or 0,
+        math.max(1,tonumber(safe.width or viewport.width) or 1),
+        math.max(1,tonumber(safe.height or viewport.height) or 1)
+    end
+    if viewport and viewport.safeX then
+      return tonumber(viewport.safeX) or 0,tonumber(viewport.safeY) or 0,
+        math.max(1,tonumber(viewport.safeWidth or viewport.width) or 1),
+        math.max(1,tonumber(viewport.safeHeight or viewport.height) or 1)
+    end
+    local g=love and love.graphics
+    return 0,0,g and g.getWidth and g.getWidth() or 1280,
+      g and g.getHeight and g.getHeight() or 720
+  end
+
+  -- v2.8.72 makes the Skin Selector's clean presentation self-contained.
+  -- The game still owns the ListMenu state/input/callbacks; this mod only
+  -- paints an independent high-resolution presenter after the native HUD.
+  -- No Gen 1 Modern UI installation is required.
+  local SELECTOR_THEME={
+    backdrop={0.018,0.030,0.055,0.74},
+    surface={0.045,0.067,0.105,0.985},
+    surfaceRaised={0.072,0.105,0.160,0.985},
+    selected={0.105,0.330,0.600,1.0},
+    accent={0.40,0.80,1.00,1.0},
+    text={0.965,0.985,1.0,1.0},
+    muted={0.64,0.73,0.84,1.0},
+    divider={0.20,0.30,0.43,1.0},
+    active={0.25,0.83,0.61,1.0},
+    shadow={0,0,0,0.28},
+  }
+
+  local selectorFonts={}
+  local function selectorFont(px)
+    px=math.max(10,math.floor((tonumber(px) or 16)+0.5))
+    if selectorFonts[px] then return selectorFonts[px] end
+    local g=love and love.graphics
+    if not (g and g.newFont) then return g and g.getFont and g.getFont() or nil end
+    local ok,font=pcall(g.newFont,px)
+    if not ok or not font then return g.getFont and g.getFont() or nil end
+    if font.setFilter then pcall(font.setFilter,font,"linear","linear",1) end
+    selectorFonts[px]=font
+    return font
+  end
+
+  local function setRGBA(c,a)
+    if not (love and love.graphics) then return end
+    love.graphics.setColor(c[1],c[2],c[3],a or c[4] or 1)
+  end
+
+  local function roundedFill(x,y,w,h,r,color)
+    setRGBA(color)
+    love.graphics.rectangle("fill",x,y,w,h,r,r)
+  end
+
+  local function roundedLine(x,y,w,h,r,color,width)
+    local g=love.graphics
+    setRGBA(color)
+    g.setLineWidth(width or 1)
+    g.rectangle("line",x,y,w,h,r,r)
+    g.setLineWidth(1)
+  end
+
+  local function drawSelectorText(text,font,x,y,color,align,width)
+    local g=love.graphics
+    if font then g.setFont(font) end
+    setRGBA(color)
+    text=tostring(text or "")
+    if width and align then g.printf(text,x,y,width,align) else g.print(text,x,y) end
+  end
+
+  local function drawStandaloneSkinSelector(menu,viewport)
+    if not (love and love.graphics and menu and menu._red3dSkinSelector) then return end
+    local g=love.graphics
+    local vx,vy,vw,vh=viewportRect(viewport)
+    if vw<360 or vh<260 then return end
+
+    local scale=math.max(0.72,math.min(1.55,math.min(vw/1280,vh/720)))
+    local outer=math.max(14,math.floor(28*scale))
+    local gap=math.max(12,math.floor(18*scale))
+    local radius=math.max(10,math.floor(18*scale))
+    local pad=math.max(12,math.floor(20*scale))
+    local titleFont=selectorFont(28*scale)
+    local subtitleFont=selectorFont(14*scale)
+    local bodyFont=selectorFont(18*scale)
+    local smallFont=selectorFont(12*scale)
+    local badgeFont=selectorFont(10*scale)
+
+    -- Large centered modal that fully covers the underlying 160x144 menu.
+    -- This keeps the clean presentation consistent whether or not another UI
+    -- overhaul happens to be installed.
+    local maxW=math.min(vw-outer*2,1500*scale)
+    local maxH=math.min(vh-outer*2,860*scale)
+    local panelW=math.max(330,maxW)
+    local panelH=math.max(250,maxH)
+    local px=vx+(vw-panelW)*0.5
+    local py=vy+(vh-panelH)*0.5
+
+    local pushed=false
+    if g.push then pushed=pcall(g.push,"all") end
+    local oldShader=g.getShader and g.getShader() or nil
+    pcall(g.setShader)
+    pcall(g.setBlendMode,"alpha","alphamultiply")
+
+    -- Dim the game behind the selector without making it disappear completely.
+    setRGBA(SELECTOR_THEME.backdrop)
+    g.rectangle("fill",vx,vy,vw,vh)
+
+    -- soft shadow + main card
+    roundedFill(px+5*scale,py+7*scale,panelW,panelH,radius,SELECTOR_THEME.shadow)
+    roundedFill(px,py,panelW,panelH,radius,SELECTOR_THEME.surface)
+    roundedLine(px,py,panelW,panelH,radius,SELECTOR_THEME.divider,math.max(1,2*scale))
+
+    local headerH=math.max(62,math.floor(76*scale))
+    local footerH=math.max(42,math.floor(54*scale))
+    drawSelectorText("SKIN SELECTOR",titleFont,px+pad,py+math.floor(12*scale),SELECTOR_THEME.text)
+    drawSelectorText("Choose a character",subtitleFont,px+pad,py+math.floor(47*scale),SELECTOR_THEME.muted)
+    setRGBA(SELECTOR_THEME.divider)
+    g.rectangle("fill",px+pad,py+headerH-1,panelW-pad*2,1)
+
+    local contentY=py+headerH+gap
+    local contentH=panelH-headerH-footerH-gap*2
+    local listW=math.max(210,math.min(panelW*0.38,450*scale))
+    local previewX=px+pad+listW+gap
+    local previewW=px+panelW-pad-previewX
+    local listX=px+pad
+
+    roundedFill(listX,contentY,listW,contentH,radius*0.75,SELECTOR_THEME.surfaceRaised)
+    roundedFill(previewX,contentY,previewW,contentH,radius*0.75,SELECTOR_THEME.surfaceRaised)
+
+    -- Character list. We derive its visual window from the live ListMenu index,
+    -- while ListMenu itself continues to own scrolling/input and onChoose.
+    local items=menu.items or {}
+    local selected=math.max(1,math.min(#items,tonumber(menu.index) or 1))
+    local listPad=math.max(10,math.floor(12*scale))
+    local rowGap=math.max(4,math.floor(6*scale))
+    local availableH=contentH-listPad*2
+    local rowH=math.max(38,math.floor(48*scale))
+    local visible=math.max(1,math.floor((availableH+rowGap)/(rowH+rowGap)))
+    visible=math.min(visible,#items)
+    local first=math.max(1,math.min(selected-math.floor(visible/2),#items-visible+1))
+    local active=renderer.activeId or "RED"
+
+    for slot=0,visible-1 do
+      local i=first+slot
+      local item=items[i]
+      if item then
+        local ry=contentY+listPad+slot*(rowH+rowGap)
+        local chosen=(i==selected)
+        if chosen then
+          roundedFill(listX+listPad,ry,listW-listPad*2,rowH,math.max(7,radius*0.48),SELECTOR_THEME.selected)
+          setRGBA(SELECTOR_THEME.accent)
+          g.rectangle("fill",listX+listPad,ry+math.max(6,rowH*0.18),math.max(3,4*scale),rowH*0.64,3,3)
+        end
+        local label=item.fullLabel or item.label or item.previewLabel or ""
+        drawSelectorText(label,bodyFont,listX+listPad+math.max(12,16*scale),
+          ry+(rowH-(bodyFont and bodyFont:getHeight() or 18))*0.5,
+          chosen and SELECTOR_THEME.text or SELECTOR_THEME.muted)
+        if item.characterId==active then
+          local badge="ACTIVE"
+          local bw=(badgeFont and badgeFont:getWidth(badge) or 38)+math.max(12,14*scale)
+          local bh=math.max(20,math.floor(23*scale))
+          local bx=listX+listW-listPad-bw-math.max(4,6*scale)
+          local by=ry+(rowH-bh)*0.5
+          roundedFill(bx,by,bw,bh,bh*0.45,SELECTOR_THEME.active)
+          drawSelectorText(badge,badgeFont,bx,by+(bh-(badgeFont and badgeFont:getHeight() or 10))*0.5,
+            {0.02,0.10,0.08,1},"center",bw)
+        end
+      end
+    end
+
+    if first>1 then drawSelectorText("▲",smallFont,listX+listW-listPad*2,contentY+4*scale,SELECTOR_THEME.muted) end
+    if first+visible-1<#items then
+      drawSelectorText("▼",smallFont,listX+listW-listPad*2,contentY+contentH-(smallFont and smallFont:getHeight() or 12)-4*scale,SELECTOR_THEME.muted)
+    end
+
+    -- High-resolution 3D portrait.
+    local item=items[selected]
+    local child=item and renderers[item.characterId] or nil
+    local viewer=menu._red3dViewer
+    local bridge=renderer.voxelBridge
+    local previewPad=math.max(12,math.floor(16*scale))
+    local label=(item and item.fullLabel) or (child and child.characterLabel) or ""
+    local countText=(#items>0) and string.format("%d / %d",selected,#items) or ""
+    drawSelectorText(label,bodyFont,previewX+previewPad,contentY+math.max(8,10*scale),SELECTOR_THEME.text)
+    local cw=smallFont and smallFont:getWidth(countText) or 0
+    drawSelectorText(countText,smallFont,previewX+previewW-previewPad-cw,contentY+math.max(12,14*scale),SELECTOR_THEME.muted)
+
+    local modelTop=contentY+math.max(44,math.floor(48*scale))
+    local modelBottom=contentY+contentH-math.max(38,math.floor(42*scale))
+    local modelX=previewX+previewPad
+    local modelY=modelTop
+    local modelW=previewW-previewPad*2
+    local modelH=math.max(80,modelBottom-modelTop)
+    roundedFill(modelX,modelY,modelW,modelH,math.max(8,radius*0.55),{0.025,0.040,0.065,0.72})
+
+    local canvas=nil
+    if viewer and child and bridge then
+      -- Render above display resolution, then downsample once. The viewer clamps
+      -- this to sane limits so large desktop windows stay sharp without an
+      -- unbounded GPU allocation.
+      local sceneW=math.max(640,math.min(1152,math.floor(modelW*1.55)))
+      local sceneH=math.max(720,math.min(1280,math.floor(modelH*1.55)))
+      local ok,result=pcall(viewer.render,viewer,child,bridge,sceneW,sceneH)
+      if ok then canvas=result end
+    end
+    if canvas then
+      local iw,ih=canvas:getDimensions()
+      local drawScale=math.min(modelW/iw,modelH/ih)
+      local dw,dh=iw*drawScale,ih*drawScale
+      g.setColor(1,1,1,1)
+      pcall(g.setBlendMode,"alpha","premultiplied")
+      g.draw(canvas,modelX+(modelW-dw)*0.5,modelY+(modelH-dh)*0.5,0,drawScale,drawScale)
+      pcall(g.setBlendMode,"alpha","alphamultiply")
+    else
+      drawSelectorText("3D PREVIEW UNAVAILABLE",smallFont,modelX,modelY+modelH*0.5,
+        SELECTOR_THEME.muted,"center",modelW)
+    end
+
+    drawSelectorText("L / R   Rotate",smallFont,previewX+previewPad,
+      contentY+contentH-math.max(26,31*scale),SELECTOR_THEME.muted)
+
+    -- Footer hints stay readable on controller and keyboard without borrowing
+    -- another UI mod's presenter or assets.
+    local footerY=py+panelH-footerH
+    setRGBA(SELECTOR_THEME.divider)
+    g.rectangle("fill",px+pad,footerY,panelW-pad*2,1)
+    drawSelectorText("↑↓  Browse",smallFont,px+pad,footerY+math.max(13,16*scale),SELECTOR_THEME.muted)
+    local centerHint="A  Select"
+    drawSelectorText(centerHint,smallFont,px,footerY+math.max(13,16*scale),SELECTOR_THEME.text,"center",panelW)
+    local back="B  Back"
+    local backW=smallFont and smallFont:getWidth(back) or 45
+    drawSelectorText(back,smallFont,px+panelW-pad-backW,footerY+math.max(13,16*scale),SELECTOR_THEME.muted)
+
+    if oldShader then pcall(g.setShader,oldShader) else pcall(g.setShader) end
+    if pushed then pcall(g.pop) end
+  end
+
+  -- Keep a completely ordinary ListMenu underneath the presenter so the game
+  -- remains the sole owner of cursor movement, callbacks, sounds, and stack state.
+  -- v2.8.72's clean UI is a self-contained high-resolution render.hud overlay.
   mod.content.screens:register(CHARACTER_SCREEN,{
     new=function(game)
       local active=renderer.activeId or "RED"
       local items={}
+      local activeIndex=1
       for _,id in ipairs(CHARACTER_ORDER) do
         if renderers[id] then
-          local selected=(id==active)
           items[#items+1]={
-            label=(selected and "> " or "  ") .. CHARACTER_DEFS[id].label,
-            right=selected and "*" or "",
+            label=SELECTOR_NAMES[id] or CHARACTER_DEFS[id].label,
+            previewLabel=SELECTOR_NAMES[id] or CHARACTER_DEFS[id].label,
+            fullLabel=CHARACTER_DEFS[id].label,
             characterId=id,
+            right=(id==active) and "ACTIVE" or nil,
           }
+          if id==active then activeIndex=#items end
         end
       end
-      return mod.ui.ListMenu.new(game,"SKIN SELECTOR",items,{
-        pageJump=true,
-        onChoose=function(item,menu)
+
+      local menu=mod.ui.ListMenu.new(game,"SKIN SELECTOR",items,{
+        pageJump=false,
+        rows=8,
+        onChoose=function(item,m)
           if item and item.characterId then applyCharacter(item.characterId) end
-          menu:close()
+          m:close()
         end,
       })
+      menu.game=menu.game or game
+      menu.screenId=CHARACTER_SCREEN
+      menu.title="SKIN SELECTOR"
+      menu.footer="L/R  TURN    A  SELECT    B  BACK"
+      menu.index=activeIndex
+      menu.scroll=math.max(0,activeIndex-(menu.rows or 8))
+      menu._red3dSkinSelector=true
+      menu._red3dViewer=(SkinSelectorViewer and SkinSelectorViewer.new)
+        and SkinSelectorViewer.new() or nil
+
+      local baseUpdate=menu.update
+      menu.update=function(self,dt)
+        local input=self.game and self.game.input
+        local viewer=self._red3dViewer
+        if viewer and input then
+          if input:wasPressed("left") then viewer:nudge(-math.rad(18)) end
+          if input:wasPressed("right") then viewer:nudge(math.rad(18)) end
+        end
+        return baseUpdate(self,dt)
+      end
+      return menu
     end,
   })
+
+  -- Draw after the native HUD. The large opaque modal covers the native
+  -- 160x144 ListMenu visually, but that ListMenu continues handling input.
+  -- This works identically with or without any external UI overhaul installed.
+  mod.hooks:wrap("render.hud",function(next,game,viewport)
+    local result=next(game,viewport)
+    local stack=game and game.stack
+    local top=stack and type(stack.top)=="function" and stack:top() or nil
+    if top and top._red3dSkinSelector then
+      local ok,err=pcall(drawStandaloneSkinSelector,top,viewport)
+      if not ok then mod.log:error("Skin Selector HD preview failed: %s",tostring(err)) end
+    end
+    return result
+  end,math.huge)
 
   local function openSkinSelector(game)
     if game then mod.ui.push(game, CHARACTER_SCREEN) end
@@ -2870,16 +4478,9 @@ return function(mod)
         local top=Game and Game.stack and Game.stack:top() or nil
         local activeRenderer=renderer and renderer.getActive and renderer:getActive() or nil
         if top and activeRenderer and activeRenderer.characterId=="CJ" then
-          -- Keep the expensive terrain triangle->block lookup warm while CJ is
-          -- active. It is intentionally incremental so it does not hitch a
-          -- frame, but it happens BEFORE the user fires rather than on impact.
-          local prewarm=rawget(renderer,"red3dPrewarmFracture")
-          if prewarm and not (type(self.red3dDebris)=="table" and #self.red3dDebris>0) then
-            -- Avoid spending a large route-wide scan every frame. Idle CJ
-            -- warms slowly; ADS warms aggressively before the trigger pull.
-            local budget=self.red3dADS and 2400 or 220
-            pcall(prewarm,top,budget)
-          end
+          -- v2.8.22: native terrain-mesh fracture/prewarm is deliberately disabled.
+          -- Some LÖVE/Gen1Recomp builds crash inside Mesh vertex-map access when
+          -- the pistol is fired. CJ shooting no longer touches that API at all.
 
           -- True third-person aim controller. Dramatic Shape's native shooter
           -- uses a squared stick curve and negative right-stick yaw; mirror
@@ -2957,39 +4558,31 @@ return function(mod)
 
     local gunSource=nil
     local function playCJGunshot()
-      if not (love and love.audio) then return end
+      -- Avoid invoking the MP3 decoder from the trigger path. A few runtime
+      -- combinations have native decoder/source crashes that pcall cannot catch.
+      -- Use a tiny generated mono crack instead; it is cached after first use.
+      if not (love and love.audio and love.sound) then return end
       if not gunSource then
-        -- Use the user-supplied pistol shot first. Keep the old synthesized
-        -- crack only as a fallback for LÖVE builds that cannot decode MP3.
-        local okAsset,src=pcall(function()
-          local bytes=mod:read("assets/cj_pistol_shot.mp3")
-          if not bytes then return nil end
-          local fd=love.filesystem.newFileData(bytes,"cj_pistol_shot.mp3")
-          local s=love.audio.newSource(fd,"static")
-          s:setVolume(0.88)
+        local okBuild,src=pcall(function()
+          local rate=22050
+          local count=math.floor(rate*0.070)
+          local sd=love.sound.newSoundData(count,rate,16,1)
+          for i=0,count-1 do
+            local t=i/math.max(1,count-1)
+            local env=(1-t)*(1-t)*(1-t)
+            local noise=(math.random()*2-1)*0.50
+            local crack=math.sin(i*0.91)*0.22
+            sd:setSample(i,math.max(-1,math.min(1,(noise+crack)*env)))
+          end
+          local s=love.audio.newSource(sd,"static")
+          s:setVolume(0.82)
           return s
         end)
-        if okAsset and src then
-          gunSource=src
-        elseif love.sound then
-          local rate=22050; local count=math.floor(rate*0.085)
-          local ok,sd=pcall(love.sound.newSoundData,count,rate,16,1)
-          if ok and sd then
-            for i=0,count-1 do
-              local t=i/count
-              local env=(1-t)^3
-              local noise=(math.random()*2-1)*0.58
-              local crack=math.sin(i*0.73)*0.24
-              sd:setSample(i,(noise+crack)*env)
-            end
-            local okS,s=pcall(love.audio.newSource,sd,"static")
-            if okS then gunSource=s end
-          end
-        end
+        if okBuild then gunSource=src end
       end
       if gunSource then
         pcall(gunSource.stop,gunSource)
-        pcall(gunSource.setPitch,gunSource,0.985+math.random()*0.03)
+        pcall(gunSource.setPitch,gunSource,0.99+math.random()*0.02)
         pcall(gunSource.play,gunSource)
       end
     end
@@ -3653,30 +5246,12 @@ return function(mod)
         player.red3dShotHitFramesHud=7
         destroyShotTarget(hit,player)
       elseif worldHit then
-        -- Replace the full 32x32 source block with temporary 3D fragments on
-        -- the SAME hit frame.  Terrain is removed underneath immediately, but
-        -- the debris grid occupies its old volume so there is no blank/pop.
-        -- First cut the ACTUAL triangles for this block out of Dramatic
-        -- Shape's live cached terrain mesh and turn them into rigid pieces.
-        -- Only if that API is unavailable do we use the old approximate cube
-        -- fallback.  The map edit happens after capture so the exact pre-hit
-        -- geometry is still available to slice.
-        local group=select(1,captureTerrainBlockDebris(player,top,worldHit.cx,worldHit.cy,dx,dy))
-        local exactPieces=group~=nil
-        if not group then group=spawnFallbackWorldDebris(player,top,worldHit.cx,worldHit.cy,dx,dy) end
-        local broken=destroyWorldCell(top,worldHit.cx,worldHit.cy)
-        if broken and group then
-          player.red3dPendingWorldBreaks=player.red3dPendingWorldBreaks or {}
-          player.red3dPendingWorldBreaks[#player.red3dPendingWorldBreaks+1]={
-            top=top,cx=worldHit.cx,cy=worldHit.cy,dx=dx,dy=dy,group=group,
-            stage="implode",
-            timer=exactPieces and math.min(CONFIG.cjWorldImplodeTime or 0.045,0.032) or 0.032,
-          }
-        elseif group then
-          burstWorldDebris(player,group,dx,dy)
-        end
+        -- STABILITY PATH: do not touch Dramatic Shape's live terrain Mesh,
+        -- vertex maps, chunk refresh APIs, or map block tables from a gunshot.
+        -- Those native mutation paths are the source of the CJ trigger crash on
+        -- affected builds. Keep recoil/HUD/raycast feedback only.
         player.red3dShotHitFramesHud=5
-        player.red3dWorldBreakFrames=10
+        player.red3dWorldBreakFrames=6
       end
       local a=renderer:getActive()
       if a then a.skinKey=nil end
@@ -3690,6 +5265,16 @@ return function(mod)
         local top=self.stack and self.stack:top() or nil
         local player=top and top.isOverworld and top.player or nil
         local activeRenderer=renderer:getActive()
+        if player then
+          if axis=="leftx" then player.red3dMoveStickX=value or 0
+          elseif axis=="lefty" then player.red3dMoveStickY=value or 0 end
+          if axis=="leftx" or axis=="lefty" then
+            local mx=tonumber(player.red3dMoveStickX) or 0
+            local my=tonumber(player.red3dMoveStickY) or 0
+            local mag=math.sqrt(mx*mx+my*my)
+            player.red3dAnalogMoveActive=mag>0.08
+          end
+        end
         if player and activeRenderer and activeRenderer.characterId=="CJ" then
           if axis=="rightx" then player.red3dLookStickX=value
           elseif axis=="righty" then player.red3dLookStickY=value
@@ -3741,7 +5326,16 @@ return function(mod)
             and not player.inputLocked and not player.fishing and not player.surfing and not player.onBike
             and not (player.hopFrames and player.hopFrames>0)
             and not (player.red3dShootCooldown and player.red3dShootCooldown>0) then
-          fireCJShot(top,player)
+          local okShot,shotErr=pcall(fireCJShot,top,player)
+          if not okShot then
+            -- Never let a CJ shot-side Lua error terminate the game loop.
+            player.red3dShootFrames=0
+            player.red3dShootTotal=0
+            player.red3dShootCooldown=math.max(6,tonumber(player.red3dShootCooldown) or 0)
+            if mod and mod.log and mod.log.error then
+              mod.log:error("CJ shot safely aborted: %s",tostring(shotErr))
+            end
+          end
           return
         end
         if button=="x" and manualJumpEnabled() and player and not selectHeld
@@ -3780,8 +5374,9 @@ return function(mod)
             player.red3dManualJumpFrames=nil
             player.red3dManualJumpTotal=nil
           else
-            player.red3dManualJumpTotal=CONFIG.manualJumpFrames
-            player.red3dManualJumpFrames=CONFIG.manualJumpFrames
+            local jumpFrames=(renderer and renderer.characterId=="BELLESTARMON") and 42 or CONFIG.manualJumpFrames
+            player.red3dManualJumpTotal=jumpFrames
+            player.red3dManualJumpFrames=jumpFrames
           end
 
           -- Invalidate cached skin keys so takeoff appears immediately.
@@ -3834,7 +5429,7 @@ return function(mod)
 
   local active=renderer:getActive()
   if active and active.data then
-    mod.log:info("3D Character Selector v2.8.7 active: %s (%d bones, %d weighted points, %d triangles)",
+    mod.log:info("3D Character Selector v2.8.70 active: %s (%d bones, %d weighted points, %d triangles)",
       tostring(active.characterLabel),active.data.boneCount,active.data.positionCount,active.data.triangleCount)
   end
   -- CJ-only third-person over-the-shoulder reticle and aim HUD.

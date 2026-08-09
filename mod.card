@@ -1,5 +1,5 @@
 return {
-  summary = "3D character selector with Red, Yugi Muto, Naruto, Roronoa Zoro, Cloud, Aang, and Carl Johnson (CJ) for overworld and Dramatic Shape battles.",
+  summary = "3D character selector with Red, Yugi Muto, Yami, BelleStarmon, Naruto, Roronoa Zoro, Cloud, Aang, Carl Johnson (CJ), Shrek, and Ash Ketchum for overworld and Dramatic Shape battles.",
   author = "Custom local build",
   tags = { "graphics", "3d", "player-model", "character-selector" },
   differences = {
@@ -9,7 +9,8 @@ return {
     },
     added = {
       "Top-level Skin Selector shortcut in the normal pause/start menu, placed immediately after MOD MENUS when present.",
-      "Red, Yugi Muto, Naruto, Roronoa Zoro, Cloud, and Aang selectable 3D characters.",
+      "High-resolution true-color rotating 3D model preview for the highlighted Skin Selector character, integrated after Gen 1 Modern UI when that mod is installed.",
+      "Red, Yugi Muto, Yami, BelleStarmon, Naruto, Roronoa Zoro, Cloud, Aang, Carl Johnson (CJ), Shrek, and Ash Ketchum selectable 3D characters.",
       "Pre-battle pointing gesture, optional X/Square manual jumping, and CJ third-person pistol controls: L2/LT aim, R1/RB fire, Y/Triangle backup fire.",
       "Persistent 360-degree body facing in Dramatic Shape free-roam: stop moving and the model keeps its last travel direction while the camera orbits independently.",
     },
@@ -19,7 +20,7 @@ return {
     },
   },
   credits = {
-    { who = "Model assets supplied by the mod user", for_ = "Red, Yugi Muto, Naruto, Roronoa Zoro, Cloud, and Aang character meshes/textures" },
+    { who = "Model assets supplied by the mod user", for_ = "Red, Yugi Muto, Roronoa Zoro, Cloud, and Aang character meshes/textures" },
     { who = "OpenAI", for_ = "Gen1Recomp 3D runtime adapter, selector, conversion tools, and animation integration" },
   },
   compat = { engine = ">=0.1.36 <2.0.0", modApi = 2 },

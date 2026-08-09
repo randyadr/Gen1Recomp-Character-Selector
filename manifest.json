@@ -1,7 +1,7 @@
 {
   "id": "red_3d_player",
   "name": "3D Character Selector",
-  "version": "2.8.9",
+  "version": "2.8.73",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -17,6 +17,6 @@
     "engine_internals"
   ],
   "affects_link": false,
-  "description": "3D character selector for Gen1Recomp/Dramatic Shape. CJ includes L2/LT third-person ADS, pistol shooting, immediate textured live-mesh world fracture, implosion/burst debris, and destructible NPCs/Pokemon/world objects.",
+  "description": "3D character selector for Gen1Recomp/Dramatic Shape with Red, Yugi Muto, Yami, BelleStarmon, Naruto, Roronoa Zoro, Cloud, Aang, Carl Johnson (CJ), Shrek, and Ash Ketchum.",
   "github": "randyadr/Gen1Recomp-Character-Selector"
 }
