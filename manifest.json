@@ -1,7 +1,7 @@
 {
   "id": "red_3d_player",
   "name": "3D Character Selector - Mobile Touch (Gen 1 + Gen 2)",
-  "version": "3.1.23",
+  "version": "3.1.24",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -24,6 +24,6 @@
     "engine_internals"
   ],
   "affects_link": false,
-  "description": "Mobile-friendly 3D character selector for Red/Blue/Yellow AND Gold. Adds the same skinned characters to overworld, Dramatic/Dramaless Shape battles, and VR, plus Android double-tap-to-3RD camera access and two-finger voxel-world pinch zoom. Includes static OceanGate Titan, donor-rig cloning, loose OBJ/FBX/DAE imports, accessories, touch controls, collision-safe eight-way movement, and true travel-direction 3D facing.",
+  "description": "Mobile-friendly 3D character selector for Red/Blue/Yellow AND Gold. Adds skinned characters to overworld, Dramatic/Dramaless Shape battles and VR, Android camera gestures/pinch zoom, collision-safe eight-way movement, and a saved per-character HEAD SIZE control up to 400% for gigantic-head mode.",
   "github": "randyadr/Gen1Recomp-Character-Selector"
 }

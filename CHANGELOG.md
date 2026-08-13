@@ -1,3 +1,11 @@
+## v3.1.24 - Gigantic head setting
+
+- Added per-character HEAD SIZE slider (100%-400%) in the Skin Selector.
+- Uses Head + descendant skin weights with a soft neck blend and animated head-joint pivot.
+- Persists per save and restores for built-in/imported humanoid characters.
+- Does not affect Titan, which has no standard Head bone.
+- Preserves v3.1.23 Gen 1 1ST/3RD FreeMove handoff and all Gen 2 behavior.
+
 ## v3.1.23 - Gen 1 free-roam movement handoff
 
 - Fixed Red/Blue/Yellow 1ST/3RD person using the companion mod's grid/diagonal movement instead of the voxel renderer's continuous camera-relative FreeMove path.

@@ -1,3 +1,12 @@
+## v3.1.24 gigantic head setting
+
+- Added a saved per-character **HEAD SIZE** control to the Skin Selector.
+- Head size ranges from **100% to 400%** in 25% steps, so any rig with a standard `Head` bone can be made deliberately gigantic.
+- The deformation scales the Head bone plus descendant face/hair geometry around the animated head joint and softly blends the neck seam; the torso/body keeps its existing size.
+- The setting works in projected overworld rendering, Voxel3D, third person, battles, selector preview, and VR. First-person VR still uses the existing headless body map.
+- Titan has no humanoid Head bone, so it intentionally does not show the HEAD SIZE control.
+- v3.1.23 Gen 1 first/third-person FreeMove handoff, Android double-tap, pinch zoom, eight-way movement, and Gen 2 behavior are preserved.
+
 ## v3.1.23 Gen 1 first/third-person free-movement handoff
 
 - Fixes Red/Blue/Yellow 1ST and 3RD person controls falling back to ordinary 2D-style tile movement.

@@ -373,6 +373,10 @@ function Renderer.new(mod,data,characterDef)
     wowIdleTime=0,wowIdleLastTime=nil,wowRunBlend=0,
     belleRunBlend=0,belleGaitPhase=0,belleKeyboardWalk=false,belleCtrlWasDown=false,
     belleSoft=nil,belleSoftSpeed=0,
+    -- v3.1.24: per-character oversized-head deformation. The actual vertex
+    -- membership is derived once from the standard Head bone and all of its
+    -- descendants, then blended at the neck so the body itself stays normal.
+    headScale=1.0,headBone=nil,headScaleWeight=nil,hasScalableHead=false,
     postSkinZUp=characterDef.postSkinZUp==true,
   },Renderer)
   -- model.lua only exposes a small animation-bone subset.  Extend it at
@@ -387,6 +391,42 @@ function Renderer.new(mod,data,characterDef)
   for i,name in ipairs(data.boneName or {}) do
     if data.animBone[name]==nil then data.animBone[name]=i end
   end
+
+  -- v3.1.24 giant-head support. Count Head plus every child bone (hair, face
+  -- helpers, hats baked into the rig, etc.) as part of the scalable head.
+  -- Per-position skin weights provide a soft seam at the neck rather than a
+  -- hard mesh cut, so this works on built-ins and imported humanoid rigs.
+  self.headBone=tonumber(data.animBone.Head)
+  if self.headBone and self.headBone>=1 then
+    local headBones={[self.headBone]=true}
+    for _=1,(tonumber(data.boneCount) or 0) do
+      local changed=false
+      for i=1,(tonumber(data.boneCount) or 0) do
+        local parent=data.boneParent and data.boneParent[i]
+        if parent and headBones[parent] and not headBones[i] then
+          headBones[i]=true; changed=true
+        end
+      end
+      if not changed then break end
+    end
+    local weights={}
+    local any=false
+    for pos=1,(tonumber(data.positionCount) or 0) do
+      local total=0
+      local first=data.posFirst and data.posFirst[pos]
+      local count=data.posCount and data.posCount[pos] or 0
+      if first then
+        for j=first,first+count-1 do
+          if headBones[data.infBone[j]] then total=total+(tonumber(data.infW[j]) or 0) end
+        end
+      end
+      weights[pos]=total
+      if total>=0.10 then any=true end
+    end
+    self.headScaleWeight=weights
+    self.hasScalableHead=any
+  end
+
   if self.behaviorId=="BELLESTARMON" then
     refineBelleSecondaryWeights(data)
   end
@@ -483,6 +523,21 @@ function Renderer:setUserScale(value)
   v=math.floor(v*100+0.5)/100
   self.userScale=v
   self.scale=(self.baseScale or (self.renderHeight/(self.maxY-self.minY)))*v
+  self.voxelUploadedKey=nil
+  self.skinKey=nil
+  self.voxelFrameKey=nil
+  return v
+end
+
+-- v3.1.24: scale only the skinned head region, leaving the body at its normal
+-- size. 100% is the original model; 400% is deliberately gigantic. Imported
+-- rigs without a standard Head alias simply stay at 100%.
+function Renderer:setHeadScale(value)
+  local v=tonumber(value) or 1.0
+  if v<1.0 then v=1.0 elseif v>4.0 then v=4.0 end
+  v=math.floor(v*4+0.5)/4 -- selector moves in clean 25% steps
+  if not self.hasScalableHead then v=1.0 end
+  self.headScale=v
   self.voxelUploadedKey=nil
   self.skinKey=nil
   self.voxelFrameKey=nil
@@ -3843,6 +3898,18 @@ function Renderer:skin()
   local sx,sy,sz=self.sx,self.sy,self.sz
   local zUp=self.postSkinZUp
   local tp=transformPoint
+
+  -- v3.1.24: the animated Head joint is the deformation pivot. Scaling around
+  -- the joint keeps the neck planted while the skull/hair grows outward.
+  local headScale=tonumber(self.headScale) or 1.0
+  local headScaleActive=self.hasScalableHead and self.headBone and headScale>1.001
+  local headWeights=self.headScaleWeight
+  local headX,headY,headZ=0,0,0
+  if headScaleActive then
+    headX,headY,headZ=tp(world[self.headBone],0,0,0)
+    if zUp then headX,headY,headZ=headX,headZ,-headY end
+  end
+
   for i=1,d.positionCount do
     local first=posFirst[i]
     local count=posCount[i]
@@ -3956,6 +4023,23 @@ function Renderer:skin()
         end
       end
     end
+
+    if headScaleActive then
+      local hw=(headWeights and tonumber(headWeights[i])) or 0
+      if hw>0.04 then
+        -- 4%-70% head influence is the soft neck transition; highly head-/hair-
+        -- weighted points get the full requested scale. Smoothstep prevents a
+        -- visible ring where head and torso weights overlap.
+        local blend=(hw-0.04)/0.66
+        if blend<0 then blend=0 elseif blend>1 then blend=1 end
+        blend=blend*blend*(3-2*blend)
+        local hs=1+(headScale-1)*blend
+        x=headX+(x-headX)*hs
+        y=headY+(y-headY)*hs
+        z=headZ+(z-headZ)*hs
+      end
+    end
+
     x,y,z=self:applySourceBasis(x,y,z)
     sx[i],sy[i],sz[i]=x,y,z
   end
@@ -5804,10 +5888,33 @@ return function(mod)
     return v
   end
 
+  function red3dCharacterHeadScaleKey(id)
+    return "character_head_scale_"..string.lower(tostring(id or "RED"))
+  end
+
+  function red3dSavedCharacterHeadScale(id)
+    local value=nil
+    if mod.save and mod.save.get then value=mod.save:get(red3dCharacterHeadScaleKey(id)) end
+    value=tonumber(value) or 1.0
+    if value<1.0 then value=1.0 elseif value>4.0 then value=4.0 end
+    return value
+  end
+
+  function red3dApplyCharacterHeadScale(id,value,persist)
+    local child=renderers[id]
+    if not child then return nil end
+    local v=child:setHeadScale(value)
+    if persist~=false and mod.save and mod.save.set then
+      mod.save:set(red3dCharacterHeadScaleKey(id),v)
+    end
+    return v
+  end
+
   -- Apply any scale values already visible in mod.save. save.loaded below repeats
   -- this after the real save bucket is restored on startup.
   for _,id in ipairs(CHARACTER_ORDER) do
     applyCharacterScale(id,savedCharacterScale(id),false)
+    red3dApplyCharacterHeadScale(id,red3dSavedCharacterHeadScale(id),false)
   end
 
   BELLE_PHYSICS_FIELDS={
@@ -6242,6 +6349,7 @@ return function(mod)
       if not renderers[id] and CHARACTER_DEFS[id] and CHARACTER_DEFS[id]._imported then
         if buildCharacterRenderer(id) then
           applyCharacterScale(id,savedCharacterScale(id),false)
+          red3dApplyCharacterHeadScale(id,red3dSavedCharacterHeadScale(id),false)
           local child=renderers[id]
           wireAccessoryRenderer(child)
           if child and (child.behaviorId=="BELLESTARMON" or child.behaviorId=="WOW") then
@@ -6476,6 +6584,7 @@ return function(mod)
     local child=buildCharacterRenderer(id)
     if not child then return nil,"renderer build failed" end
     applyCharacterScale(id,savedCharacterScale(id),false)
+    red3dApplyCharacterHeadScale(id,red3dSavedCharacterHeadScale(id),false)
     wireAccessoryRenderer(child)
     if child.behaviorId=="BELLESTARMON" or child.behaviorId=="WOW" then applyBelleSavedProfile(id) end
     persistRigField(sourceId,"donorId",def._donorId)
@@ -6513,6 +6622,7 @@ return function(mod)
     local child=buildCharacterRenderer(id)
     if child then
       applyCharacterScale(id,savedCharacterScale(id),false)
+      red3dApplyCharacterHeadScale(id,red3dSavedCharacterHeadScale(id),false)
       wireAccessoryRenderer(child)
       persistRigField(accessoryId,"cloneDonor",false)
       persistRigField(accessoryId,"enabled",true)
@@ -6761,6 +6871,17 @@ return function(mod)
     local child=renderers[id]
     if not child then return nil end
     local value=applyCharacterScale(id,(child.userScale or 1.0)+(tonumber(delta) or 0),true)
+    if viewer then
+      if type(viewer.invalidate)=="function" then viewer:invalidate()
+      else viewer.lastRenderClock=nil end
+    end
+    return value
+  end
+
+  function red3dAdjustCharacterHeadScale(id,delta,viewer)
+    local child=renderers[id]
+    if not child or not child.hasScalableHead then return nil end
+    local value=red3dApplyCharacterHeadScale(id,(child.headScale or 1.0)+(tonumber(delta) or 0),true)
     if viewer then
       if type(viewer.invalidate)=="function" then viewer:invalidate()
       else viewer.lastRenderClock=nil end
@@ -7323,6 +7444,10 @@ return function(mod)
     end
 
     controls[#controls+1]={label="SIZE",action="size",value=(child and child.userScale) or 1.0,min=0.50,max=1.50,step=0.05}
+    if child and child.hasScalableHead then
+      controls[#controls+1]={label="HEAD SIZE",action="headSize",value=child.headScale or 1.0,min=1.0,max=4.0,step=0.25,
+        display=string.format("%d%%",math.floor((child.headScale or 1.0)*100+0.5))}
+    end
     -- v3.1.4 FACE FLIP: turn a character 180 degrees in the ordinary
     -- (non-voxel) render path.  Source rigs disagree about which way is
     -- forward -- a Z-up export lands facing -Z after the postSkinZUp axis
@@ -7513,6 +7638,9 @@ return function(mod)
 
     if action=="size" then
       adjustCharacterScale(id,(control.step or 0.05)*sign,viewer)
+      return
+    elseif action=="headSize" and child and child.hasScalableHead then
+      red3dAdjustCharacterHeadScale(id,(control.step or 0.25)*sign,viewer)
       return
     elseif action=="faceFlip" and child then
       child:setFaceFlip(not ((child.faceFlipYaw or 0)~=0))
@@ -8020,6 +8148,8 @@ return function(mod)
     if step>0 then value=math.floor(value/step+0.5)*step end
     if control.action=="size" then
       applyCharacterScale(id,value,true)
+    elseif control.action=="headSize" and child and child.hasScalableHead then
+      red3dApplyCharacterHeadScale(id,value,true)
     elseif control.action=="breastStrength" and child and (child.behaviorId=="BELLESTARMON" or child.behaviorId=="WOW") then
       applyBellePhysics("breast",value,true,id)
     elseif (control.action=="breastAreaLeftRadius" or control.action=="breastAreaRightRadius" or control.action=="breastAreaUpperLimit" or control.action=="breastAreaLowerLimit")
@@ -8261,7 +8391,7 @@ return function(mod)
     local headerH=mobile and math.max(52,math.floor(58*scale)) or math.max(62,math.floor(76*scale))
     local footerH=mobile and math.max(82,math.floor(90*scale)) or math.max(88,math.floor(104*scale))
     drawSelectorText("SKIN SELECTOR",titleFont,px+pad,py+math.floor((mobile and 8 or 12)*scale),SELECTOR_THEME.text)
-    local versionLabel="v3.1.23"
+    local versionLabel="v3.1.24"
     local versionW=smallFont and smallFont:getWidth(versionLabel) or 0
     drawSelectorText(versionLabel,smallFont,px+panelW-pad-versionW,py+math.floor((mobile and 15 or 20)*scale),SELECTOR_THEME.muted)
     drawSelectorText(mobile and "Tap a skin • settings use ▲/▼ • drag preview • pinch to zoom"
@@ -9853,6 +9983,7 @@ return function(mod)
       -- the selected character. Missing keys from old saves cleanly mean 100%.
       for _,scaleId in ipairs(CHARACTER_ORDER) do
         applyCharacterScale(scaleId,savedCharacterScale(scaleId),false)
+        red3dApplyCharacterHeadScale(scaleId,red3dSavedCharacterHeadScale(scaleId),false)
       end
       for belleId,belleChild in pairs(renderers) do
         if belleChild and (belleChild.behaviorId=="BELLESTARMON" or belleChild.behaviorId=="WOW") then
@@ -9875,10 +10006,11 @@ return function(mod)
       ACCESSORY_STATE={}
       RIG_STATE={}
       clearRiggedCharacters()
-      -- New saves start from Red and every character starts at 100% visual scale.
+      -- New saves start from Red and every character starts at 100% visual/head scale.
       if mod.save and mod.save.set then mod.save:set("selected_character_3d","RED") end
       for _,scaleId in ipairs(CHARACTER_ORDER) do
         applyCharacterScale(scaleId,1.0,true)
+        red3dApplyCharacterHeadScale(scaleId,1.0,true)
       end
       for id,child in pairs(renderers) do
         if child and (child.behaviorId=="BELLESTARMON" or child.behaviorId=="WOW") then

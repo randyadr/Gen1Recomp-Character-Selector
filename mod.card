@@ -13,6 +13,7 @@ return {
       "Mobile Touch selector mode for Android/iOS and touchscreen hosts with larger tap targets, one-finger orbit/pan, two-finger pinch-zoom + pan, and on-screen Orbit/Pan/Zoom/Reset camera buttons.",
       "Aang, Ash Ketchum, BelleStarmon, Cloud, Naruto, OceanGate Titan, Red, Roronoa Zoro, Shrek, Ugandan Knuckles, Sabrina, Wow, Yami, and Yugi Muto selectable 3D characters.",
       "Per-character 50%-150% visual scale with live Skin Selector preview and per-save persistence.",
+      "Per-character HEAD SIZE control from 100%-400% for gigantic-head mode, with soft neck blending and per-save persistence on humanoid rigs.",
       "Per-save character renaming directly in the Skin Selector; display names change without changing stable internal character IDs.",
       "Portable single-file .red3dskin export/import from the Skin Selector for sharing or moving characters between installs.",
       "ZIP accessory importer/editor for static OBJ/FBX/DAE models with material-aware textures, selectable FBX UV mapping, saved texture repair toggles, rigid animated-bone attachment, XYZ placement, scale/rotation, and per-character persistence.",
@@ -44,3 +45,4 @@ return {
   },
   compat = { engine = ">=0.1.36 <2.0.0", modApi = 2 },
 }
+
