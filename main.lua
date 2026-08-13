@@ -4941,48 +4941,38 @@ local function installVoxelBridge(mod,renderer)
     return ok and hidden==true
   end
 
+  -- v3.1.22: the VISIBLE Gen 1 voxel pass owns locomotion animation time.
+  -- The old bridge advanced beginVoxelFrame() from castShadows and merely let
+  -- drawCast consume a marker. That made Red/Blue/Yellow animation dependent on
+  -- whether a particular Dramatic/Dramaless Shape build decided to run, cache,
+  -- or skip its sun pass. Gold never uses this bridge, which is why Gen 2 could
+  -- remain healthy while Gen 1 models froze/stuttered.
+  --
+  -- Shadows now reuse the most recently skinned pose; drawCast advances the
+  -- controller every visible frame. This also fixes third-person/shadowless
+  -- paths without tying gait timing to a hidden render pass.
   local function red3dPrepareShadowFrame(player,p)
     if not (player and p) then return end
-    local now=red3dFrameNow()
-    -- Some pipeline revisions can touch the shadow path more than once during
-    -- one render. Treat calls within 3 ms as the same rendered frame. Normal
-    -- gameplay frames are much farther apart, while this prevents double gait
-    -- advancement from duplicate shadow work.
-    if now and bridge.lastShadowFramePrepTime
-        and (now-bridge.lastShadowFramePrepTime)>=0
-        and (now-bridge.lastShadowFramePrepTime)<0.003 then
-      bridge.framePreparedByShadow=true
-      return
-    end
-    renderer:beginVoxelFrame(player,p)
-    bridge.framePreparedByShadow=true
-    bridge.lastShadowFramePrepTime=now
+    bridge.lastShadowFramePrepTime=red3dFrameNow()
+    -- Deliberately DO NOT call beginVoxelFrame() here.
   end
 
   local function red3dPrepareVisibleFrame(player,p)
     if not (player and p) then return end
-    if bridge.framePreparedByShadow then
-      -- Normal voxel mode consumes this marker after one visible pass. VR is
-      -- different: VoxelScene draws the SAME prepared world once per eye, so
-      -- both eyes must keep reusing the shadow-prepared skeleton or the second
-      -- eye could advance a gait frame and stereo would disagree. The next VR
-      -- frame's shadow pass simply overwrites the marker with a fresh pose.
-      if not red3dVRActive() then bridge.framePreparedByShadow=false end
-      bridge.lastVisibleFramePrepTime=red3dFrameNow()
-      return
+    local now=red3dFrameNow()
+
+    -- drawCast can be reached more than once for one display frame (VR stereo,
+    -- reflections, or nearby voxel forks). De-duplicate only those immediate
+    -- repeats. VR gets a slightly wider window so left/right eyes always share
+    -- one skeleton pose; normal high-refresh rendering keeps the old tight gate.
+    local duplicateWindow=red3dVRActive() and 0.008 or 0.003
+    if now and bridge.lastVisibleFramePrepTime then
+      local dt=now-bridge.lastVisibleFramePrepTime
+      if dt>=0 and dt<duplicateWindow then return end
     end
 
-    -- Third-person / shadowless path: make the visible cast responsible for
-    -- advancing the same shared voxel animation controller. A tiny duplicate
-    -- pass gate avoids double advancement if drawCast is invoked twice by a
-    -- renderer variant in the same rendered frame.
-    local now=red3dFrameNow()
-    if now and bridge.lastVisibleFramePrepTime
-        and (now-bridge.lastVisibleFramePrepTime)>=0
-        and (now-bridge.lastVisibleFramePrepTime)<0.003 then
-      return
-    end
     renderer:beginVoxelFrame(player,p)
+    bridge.framePreparedByShadow=false
     bridge.lastVisibleFramePrepTime=now
   end
 
@@ -8271,7 +8261,7 @@ return function(mod)
     local headerH=mobile and math.max(52,math.floor(58*scale)) or math.max(62,math.floor(76*scale))
     local footerH=mobile and math.max(82,math.floor(90*scale)) or math.max(88,math.floor(104*scale))
     drawSelectorText("SKIN SELECTOR",titleFont,px+pad,py+math.floor((mobile and 8 or 12)*scale),SELECTOR_THEME.text)
-    local versionLabel="v3.1.21"
+    local versionLabel="v3.1.23"
     local versionW=smallFont and smallFont:getWidth(versionLabel) or 0
     drawSelectorText(versionLabel,smallFont,px+panelW-pad-versionW,py+math.floor((mobile and 15 or 20)*scale),SELECTOR_THEME.muted)
     drawSelectorText(mobile and "Tap a skin • settings use ▲/▼ • drag preview • pinch to zoom"
@@ -10027,11 +10017,71 @@ return function(mod)
       return true
     end
 
+    -- v3.1.23: 1ST/3RD PERSON MUST BELONG TO THE VOXEL MOD'S FREE MOVE.
+    --
+    -- Dramaless/Dramatic Shape installs its own OverworldState:handleInput
+    -- wrapper for the free-roam camera rungs.  While FirstPerson.driving() is
+    -- true that wrapper replaces the grid walk with continuous camera-relative
+    -- movement (FreeMove).  Our v3.1.12 eight-way tile helper lives on the same
+    -- seam, so when this companion wrapper happens to sit OUTSIDE FreeMove it
+    -- must not consume diagonal input first -- doing so turns an analogue/free
+    -- walk back into ordinary Pokemon cell steps in 1ST/3RD.
+    --
+    -- Prefer the exact private FirstPerson table already captured from the live
+    -- voxel renderer.  The pipeline-label fallback covers the brief startup
+    -- window before that bridge is captured and nearby voxel forks with the same
+    -- public 1ST/3RD labels.  This gate is Gen 1 only; Gold keeps Gen2Bridge.
+    local okMovePipelines,MovePipelines=pcall(require,"src.render.Pipelines")
+    local function voxelFreeRoamDriving()
+      local bridge=renderer and renderer.voxelBridge or nil
+      local fp=bridge and bridge.FirstPerson or nil
+      if type(fp)=="table" and type(fp.driving)=="function" then
+        local okDriving,driving=pcall(fp.driving)
+        if okDriving and driving==true then return true end
+      end
+
+      if okMovePipelines and MovePipelines then
+        local function freeLabel(id)
+          if type(MovePipelines.level)=="function"
+              and type(MovePipelines.levelLabel)=="function" then
+            local level=MovePipelines.level(id) or 0
+            if level<=0 then return false end
+            local text=string.upper(tostring(MovePipelines.levelLabel(id,level) or ""))
+            return text:find("1ST",1,true)~=nil
+                or text:find("FIRST",1,true)~=nil
+                or text:find("3RD",1,true)~=nil
+                or text:find("THIRD",1,true)~=nil
+          end
+          return false
+        end
+        if freeLabel("voxel") then return true end
+        if type(MovePipelines.list)=="function" then
+          local okList,list=pcall(MovePipelines.list)
+          if okList and type(list)=="table" then
+            for _,entry in ipairs(list) do
+              if type(entry)=="table" and type(entry.id)=="string"
+                  and freeLabel(entry.id) then return true end
+            end
+          end
+        end
+      end
+      return false
+    end
+
     if okOW and type(OverworldState)=="table" and type(OverworldState.handleInput)=="function"
         and not OverworldState.red3dDirectionalMovementInstalled then
       OverworldState.red3dDirectionalMovementInstalled=true
       local previousHandleInput=OverworldState.handleInput
       function OverworldState:handleInput(...)
+        -- Critical handoff: never run this mod's tile/diagonal movement while
+        -- the live voxel camera is 1ST/3RD.  If FreeMove was installed before
+        -- us, previousHandleInput IS its wrapper; if it was installed after us,
+        -- its outer wrapper never reaches this one while driving.  Either load
+        -- order therefore ends at the voxel mod's continuous movement path.
+        if voxelFreeRoamDriving() then
+          return previousHandleInput(self,...)
+        end
+
         local input=okGameMove and GameMove and GameMove.input or nil
         local p=self.player
         -- Preserve the engine's mid-step button latch and all A/START actions.
@@ -10049,48 +10099,52 @@ return function(mod)
       end
     end
 
-    -- Gen 1's stock Player:update advances along Collision.DELTA[facing], which
-    -- is necessarily cardinal. For ONLY our diagonal steps interpolate to the
-    -- explicit target cell (the same target-vector strategy Gold already uses).
+    -- v3.1.22: NEVER replace Gen 1's movement/animation update loop.
+    -- The original v3.1.12 diagonal path copied Player:update() into this mod.
+    -- That worked against one engine revision, but it also meant every later
+    -- Gen1Recomp animation/timer fix (animClock, landing pose, bump cadence,
+    -- hop/spin bookkeeping, etc.) was bypassed during diagonal movement.
+    --
+    -- Let the stock Player:update() do ALL state/animation work first. Its
+    -- cardinal Collision.DELTA only makes the in-between pixels wrong for a
+    -- diagonal target, so after it advances we correct px/py from the explicit
+    -- start -> target vector. Landing already commits targetX/targetY correctly.
     if Player and type(Player.update)=="function" and not Player.red3dDirectionalUpdateInstalled then
       Player.red3dDirectionalUpdateInstalled=true
       local previousDirectionalUpdate=Player.update
       function Player:update(...)
         if not self.red3dDiagonalMove then return previousDirectionalUpdate(self,...) end
 
-        self.stepLanded=false
-        if self.hopFrames and self.hopFrames>0 then self.hopFrames=self.hopFrames-1 end
-        if self.turnTimer and self.turnTimer>0 then self.turnTimer=self.turnTimer-1 end
-        if self.spinFrames then
-          self.spinFrames=self.spinFrames-1
-          if self.spinFrames<=0 then
-            self.spinFrames=nil; self.spinDrop=nil; self.spinRise=nil; self.spinning=false
-          end
-        end
         if not self.moving then
           self.red3dDiagonalMove=nil
-          return false
+          return previousDirectionalUpdate(self,...)
         end
 
-        local stepLen=self.stepFramesCur or self.stepFrames or 16
-        self.progress=(self.progress or 0)+1
-        self.animClock=(self.animClock or 0)+1
-        local adv=math.floor(self.progress*16/stepLen)
-        local dx=(self.targetX or self.cellX)-self.cellX
-        local dy=(self.targetY or self.cellY)-self.cellY
-        self.px=self.cellX*16+dx*adv
-        self.py=self.cellY*16+dy*adv
-        if self.progress>=stepLen then
-          self.cellX,self.cellY=self.targetX,self.targetY
-          self.targetX,self.targetY=nil,nil
-          self.px,self.py=self.cellX*16,self.cellY*16
-          self.moving=false
-          self.stepFlip=not self.stepFlip
-          self.stepLanded=true
+        local startX,startY=tonumber(self.cellX) or 0,tonumber(self.cellY) or 0
+        local targetX,targetY=tonumber(self.targetX),tonumber(self.targetY)
+        local stepLen=tonumber(self.stepFramesCur) or tonumber(self.stepFrames) or 16
+        if not (targetX and targetY) then
           self.red3dDiagonalMove=nil
-          return true
+          return previousDirectionalUpdate(self,...)
         end
-        return false
+
+        local dx,dy=targetX-startX,targetY-startY
+        local landed=previousDirectionalUpdate(self,...)
+
+        if landed or not self.moving then
+          -- Stock update has already committed the real diagonal destination,
+          -- toggled stepFlip, preserved its land-frame pose and animation clock.
+          self.red3dDiagonalMove=nil
+          return landed
+        end
+
+        -- Stock update advanced progress/animClock/timers. Replace only the
+        -- cardinal interpolation it wrote to px/py with the diagonal vector.
+        local progress=tonumber(self.progress) or 0
+        local adv=math.floor(progress*16/math.max(1,stepLen))
+        self.px=startX*16+dx*adv
+        self.py=startY*16+dy*adv
+        return landed
       end
     end
   end
