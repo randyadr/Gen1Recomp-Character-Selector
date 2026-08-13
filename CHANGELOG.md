@@ -1,3 +1,20 @@
+## v3.1.23 - Gen 1 free-roam movement handoff
+
+- Fixed Red/Blue/Yellow 1ST/3RD person using the companion mod's grid/diagonal movement instead of the voxel renderer's continuous camera-relative FreeMove path.
+- The Gen 1 directional wrapper now detects active 1ST/3RD free-roam and immediately delegates to the previously installed voxel movement handler.
+- Added a pipeline-label fallback so the handoff remains correct across compatible Dramatic/Dramaless Shape forks and load order differences.
+- Gold / Gen 2 movement code is untouched.
+
+## v3.1.22 - Gen 1 overworld walk/run animation repair
+
+- Fixed Red/Blue/Yellow 3D overworld locomotion animation without changing the Gen 2/Gold bridge.
+- Made the **visible Gen 1 voxel draw** the authoritative `beginVoxelFrame()` animation tick; shadows now reuse the already-skinned pose instead of owning animation time.
+- Removed the fragile shadow-pass dependency that could freeze or stutter walk/run poses when Dramatic/Dramaless Shape cached, skipped, or reordered the sun/shadow pass.
+- Reworked Gen 1 diagonal movement so it calls the stock `Player:update()` first and changes only the temporary diagonal `px/py` interpolation afterward.
+- This preserves Gen1Recomp's native `animClock`, `stepLanded`, `stepFlip`, wall-bonk cadence, hop/spin timing, and future Player-update fixes during diagonal movement.
+- Gen 2 directional movement/animation code is untouched.
+- Android pinch zoom, double-tap -> 3RD person, VR support, and the number-3 ZOOM -> 1ST -> 3RD camera cycle are unchanged.
+
 ## v3.1.21 - Android voxel-world pinch zoom
 
 - Added two-finger pinch/spread zoom on empty Android overworld screen space while the voxel renderer is available.

@@ -1,3 +1,16 @@
+## v3.1.23 Gen 1 first/third-person free-movement handoff
+
+- Fixes Red/Blue/Yellow 1ST and 3RD person controls falling back to ordinary 2D-style tile movement.
+- The Gen 1 eight-way tile helper now stands down completely while the voxel renderer's free-roam camera is driving.
+- 1ST/3RD now pass movement to Dramatic/Dramaless Shape FreeMove for continuous camera-relative control and its normal walk/run animation clock.
+- Regular 2D/voxel eight-way movement is unchanged. Gen 2 / Gold is unchanged.
+
+## v3.1.22 Gen 1 overworld locomotion animation repair
+
+Red, Blue, and Yellow now keep their 3D walk/run animation clock on the **visible voxel player render**, instead of depending on Dramatic/Dramaless Shape's optional/cached shadow pass. This removes the Gen-1-only freeze/stutter path while leaving Gold's separate Gen 2 bridge unchanged.
+
+Gen 1 diagonal movement also no longer replaces the engine's `Player:update()`. The stock update advances `animClock`, landing poses, hop/spin timers, bump cadence, and any newer engine bookkeeping first; the mod only corrects the in-between X/Y interpolation to the diagonal target afterward. Eight-way movement, Android double-tap 3RD person, pinch zoom, VR support, and the number-3 camera cycle are retained.
+
 ## v3.1.21 Android voxel-world pinch zoom
 
 On Android, use **two fingers on empty gameplay space and pinch/spread to zoom the voxel world**. Regular voxel/orbit views drive Gen1Recomp's survey zoom; **3RD PERSON** drives the voxel renderer's boom distance when that camera exposes its native zoom control. **1ST PERSON** intentionally ignores pinch because the camera is fixed at the player's eyes. Pinch motion is claimed before other touch wrappers can double-apply it, while press/release still reach the host so touch ids cannot get stuck. Touch-control regions are excluded, and pinch gestures cannot trigger the existing double-tap-to-3RD shortcut.

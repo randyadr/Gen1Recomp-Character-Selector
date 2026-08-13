@@ -27,6 +27,7 @@ return {
       "Pre-battle pointing gesture and optional X/Square manual jumping.",
       "Persistent 360-degree body facing in Dramatic Shape free-roam: stop moving and the model keeps its last travel direction while the camera orbits independently.",
       "Collision-safe eight-way on-foot movement in Gen 1 + Gen 2, with four diagonal directions, normalized diagonal speed, and diagonal 3D travel-facing.",
+      "Gen 1 Red/Blue/Yellow voxel walk/run animation timing is driven by the visible model pass and diagonal movement preserves the engine's native Player animation clock.",
       "VR support for custom 3D characters in Dramatic/Dramaless Shape: full stereo models in diorama and battle views, plus an animated headless first-person body that follows HMD yaw and room-scale lean without putting face/hair geometry inside the headset.",
       "Android double-tap on empty overworld screen space jumps directly to the voxel renderer's 3RD PERSON camera without triggering from touch-control or multi-touch gesture regions.",
       "Android two-finger pinch/spread on empty overworld space zooms the voxel world; orbit views use survey zoom and 3RD PERSON uses the voxel renderer's boom zoom when exposed.",
