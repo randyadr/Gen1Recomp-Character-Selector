@@ -1,3 +1,639 @@
+## v3.1.21 - Android voxel-world pinch zoom
+
+- Added two-finger pinch/spread zoom on empty Android overworld screen space while the voxel renderer is available.
+- Normal voxel/orbit cameras use Gen1Recomp's survey zoom ladder; spreading fingers zooms in and pinching together zooms out.
+- 3RD PERSON uses the installed voxel renderer's native continuous boom zoom (`ThirdPerson.scaleZoom`) when available, with a stepped fallback for nearby forks.
+- 1ST PERSON ignores pinch because there is no external camera distance to change.
+- Pinch MOVE events are claimed at the physical LOVE touch layer to prevent another touch/voxel wrapper from applying the same gesture twice; press/release still pass through so touch ids clear normally.
+- Touch-control regions are excluded, and pinch participation permanently disqualifies those touches from the Android double-tap-to-3RD gesture.
+- The number-3 ZOOM -> 1ST -> 3RD camera cycle, VR support, eight-way movement, animations, models, and character-specific fixes are unchanged.
+
+## v3.1.20 - Android double-tap third-person shortcut
+
+- Added an Android-only double-tap gesture that jumps directly to the voxel renderer's **3RD PERSON** camera rung.
+- The gesture observes physical `love.touch*` callbacks before Game/state routing, so it still works when another state/mod consumes normal touch input.
+- Double taps on the on-screen D-pad/A/B/control regions are ignored. Multi-touch and moved/dragged touches are excluded so camera look and pinch gestures do not trigger the shortcut.
+- The shortcut only operates while the actual overworld is the top state; menus, dialogs, selector screens, battles, and launch UI are untouched.
+- The v3.1.19 keyboard **3** cycle remains **ZOOM -> 1ST PERSON -> 3RD PERSON -> ZOOM**. VR, eight-way movement, animations, models, and character-specific fixes are unchanged.
+
+## v3.1.19 - hard 3-key camera input fix
+
+- Moved the requested **3-key** camera cycle above `Game:keypressed()` to LOVE's physical keyboard callback so a top state or another input wrapper cannot consume `3` before the camera shortcut sees it.
+- Removed the `Pipelines.canToggle()` dependency that could reject the camera change even while the voxel renderer itself was active.
+- Added an event-independent physical-key poll in `love.update`; if another callback swallows the keypress event, the held `3`/keypad `3` state still advances the camera exactly once per press.
+- The cycle remains **ZOOM -> 1ST PERSON -> 3RD PERSON -> ZOOM** and only claims `3` while the actual overworld is the top state.
+- Camera pipeline discovery is now fork-safe: it scans registered pipelines for live `1ST`/`3RD` labels instead of requiring the id to be exactly `voxel`.
+- The selected pipeline level is pushed directly into the captured private VoxelState as an immediate compatibility backup, then persisted through the normal pipeline options.
+- VR support, eight-way locomotion, animations, models, and all character-specific fixes are unchanged.
+
+## v3.1.18 - number 3 camera cycle
+
+- Replaced the v3.1.17 F6 companion shortcut with the requested **3-key** camera cycle.
+- Press **3** to cycle **ZOOM -> 1ST PERSON -> 3RD PERSON -> ZOOM**.
+- The cycle resolves the installed voxel renderer's live camera labels, preferring an explicit `ZOOM` level and otherwise using its normal `75` orbit rung before 1ST/3RD.
+- From any other voxel camera level, the first press enters ZOOM so the three-stage sequence always starts consistently.
+- Added the same edge-polling fallback used by the prior hotkey fix, including keypad `3`, while leaving menus and the Skin Selector's number keys untouched when the voxel pipeline cannot toggle.
+- VR model support, third-person animation fixes, eight-way movement, and all built-in characters are unchanged.
+
+## v3.1.16 - restore first/third-person camera hotkey
+
+- Fixed the v3.1.15 regression where the voxel mod's own camera-cycle hotkey (F6 on the affected build) could stop switching between first-person and third-person.
+- Removed the eager `V.require("VR")` call from the 3D-character bridge. Loading another mod's private VR module can install input/camera hooks as a side effect even when no headset session is running.
+- VR detection is now passive: the character mod reads an already-captured `VR` table from the voxel pipeline's `drawWorld`, `update`, or render closure and never initializes VR itself.
+- Preserves v3.1.15 first-person headless VR bodies, stereo pose reuse, tabletop/battle VR models, v3.1.14 third-person animation fixes, and v3.1.13 eight-way locomotion.
+
+## v3.1.15 - VR 3D character support
+
+- Added VR-aware rendering for the selected 3D character when Dramatic Shape or Dramaless Shape is running its OpenXR headset path.
+- Diorama/tabletop VR and staged VR battles continue through the normal full-body replacement path, so the selected textured/animated model is rendered for both eyes instead of falling back to the stock player card.
+- Added a dedicated first-person VR body pass because the voxel renderer intentionally suppresses the player's own card when the headset is inside the player's head.
+- First-person VR uses a headless mesh: triangles primarily weighted to the Head bone and its descendants are removed so face/hair geometry cannot surround the near plane.
+- The first-person body is normalized to the voxel VR rig's life scale, follows HMD yaw while keeping one grounded world transform shared by both stereo eyes.
+- Both stereo eyes reuse the exact same prepared skinned pose, preventing left/right-eye gait or secondary-motion disagreement.
+- Head-mounted accessories are skipped only in first-person VR to prevent hats/helmets from clipping into the headset; normal voxel, third-person, diorama VR, battle VR, shadows, selector previews, and accessories keep the full model.
+- The static OceanGate Titan remains visible in tabletop/diorama and battle VR but is intentionally omitted from first-person VR because it has no humanoid Head/body rig and its hull would surround the headset.
+- Added `DRAMALESS_SHAPE` as an optional dependency alongside `DRAMATIC_SHAPE`; non-VR and non-voxel rendering remains unchanged.
+
+## v3.1.14 - third-person locomotion animation fix
+
+- Fixed walk/run animations freezing in Dramatic Shape third-person while the same character still animated in regular voxel mode.
+- Third-person/shadowless rendering now advances the exact same `beginVoxelFrame()` locomotion controller used by the normal voxel path.
+- If the sun/shadow pass already prepared the current pose, the visible draw reuses it instead of advancing twice; if that pass is skipped, the visible draw becomes the frame source.
+- Added a small duplicate-pass guard for renderer variants that invoke shadow or visible cast work more than once inside the same rendered frame.
+- True eight-way movement, continuous travel-facing, walk/run clips, idle clips, jumping, and character-specific secondary animation all continue through the shared voxel animation state.
+
+## v3.1.13 - directional locomotion animation fix
+
+- Fixed eight-way movement visually sliding with the character stuck in idle on renderer paths where Gen1Recomp/Dramatic Shape did not expose a reliable `player.moving` flag.
+- Locomotion now activates from the explicit diagonal-step marker, an outstanding movement target, **or actual X/Y displacement**. Real displacement is treated as the final source of truth.
+- Keeps walk/run playback active for the full diagonal step, including render frames where tile interpolation repeats the same integer pixel.
+- Applies to every animated built-in character while leaving static OceanGate Titan unchanged.
+
+## v3.1.12 - true directional movement
+
+- Added collision-safe **eight-way on-foot movement** to Gen 1 and Gen 2: up/down/left/right plus all four diagonals from keyboard, d-pad combinations, or the controller left stick.
+- Diagonal steps use both map axes at once and keep the normal walking animation active for the full movement.
+- Normalized diagonal step duration by `sqrt(2)` after the existing `movement.speed` hook, preventing diagonal movement from becoming ~41% faster than cardinal walking.
+- Added strict corner checks: both orthogonal side cells and the diagonal destination must be legal and unoccupied, so diagonal movement cannot squeeze through walls or NPCs.
+- Added continuous projected-render travel facing based on the real step vector. Characters now visibly face diagonal travel directions instead of snapping their 3D body to one of four sprite facings.
+- Preserved cardinal `player.facing` for interactions, doors, ledges, scripts, and other engine systems.
+- Bikes, surfing, fishing, Cycling Road/forced directions, map-edge connections, door carpets, currents, scripted steps, and special movement continue using the stock movement rules.
+- Gold stores the raw left-stick X/Y pair before the stock input layer reduces it to one dominant axis, allowing real two-axis controller intent.
+
+## v3.1.11 - Sabrina character
+
+- Added Sabrina to the built-in Skin Selector.
+- Converted the user-supplied 52-bone FBX skin (9,573 positions / 16,751 triangles).
+- Added authored Idle, Catwalk Walking, Goofy Running, and Jumping animation clips.
+- Generalized the existing native WOW_FBX locomotion blend so Sabrina can use its walk/run/jump sampler without inheriting Wow-specific selector/physics controls.
+- Added the supplied Sabrina texture atlas and verified the source basis faces forward at the default selector camera.
+
+## v3.1.10 - Ugandan Knuckles character
+
+- Added **Ugandan Knuckles** as a built-in selectable character.
+- Converted the supplied `Idle.fbx`, `Running(1).fbx`, and `Jump.fbx` into the mod's native 34-bone skinned animation format.
+- Added the supplied `Knuckles_Texture.png` as the character atlas with FBX UV orientation corrected for the runtime.
+- Preserved the authored Idle/Running/Jump poses while removing baked horizontal FBX root travel, so Gen1Recomp remains responsible for world movement and the model does not slide ahead of the player.
+- Verified the converted bind pose reconstructs all 8,567 weighted positions with negligible numerical error and that the source forward axis shows the character's face without a yaw correction.
+
+## v3.1.9 - BelleStarmon selector pose removal
+
+- Removed BelleStarmon's selector pose option and disabled its old hidden static-pose path.
+- BelleStarmon now always uses its normal animated selector idle; Wow's selector pose options are unchanged.
+
+## v3.1.8 - source-basis forward fix (Naruto + BelleStarmon)
+
+- Replaces the failed renderer-yaw workaround with a geometry-level 180° source-basis correction for Naruto and BelleStarmon.
+- The correction is applied after skinning/secondary physics, so every rendering path receives the same canonical forward direction: Gold projected gameplay, the Gold selector fallback, Dramatic Shape/Voxel3D, selector Voxel3D, battle rendering, and rigid accessories.
+- Naruto/BelleStarmon `modelYawOffset` and `projectYawOffset` are returned to zero to prevent double-compensation.
+- FACE FLIP now applies consistently to projected, Voxel3D, battle, and selector rendering.
+- One-time migration clears old Naruto/BelleStarmon FACE FLIP saves so v3.1.8 starts from the corrected default.
+- `.red3dskin` export/import and donor-rig cloning preserve the new `sourceYaw180` metadata.
+
+## v3.1.7 - correct intrinsic forward axis in viewer + Gold overworld
+
+### Fixed
+- Restored the intrinsic 180-degree model yaw for **Naruto** and **BelleStarmon**. Their source meshes are authored facing `-Z`, so the Voxel3D Skin Selector portrait must rotate them by pi to show their fronts at the default camera angle.
+- Added a separate `projectYawOffset` for the ordinary projected renderer used by **Pokémon Gold / Gen 2**. Naruto and BelleStarmon now also receive a 180-degree correction in that path, so their bodies face the same direction they travel instead of running backward.
+- Kept user **FACE FLIP** as an additional manual override rather than using it as the built-in orientation repair. Existing FACE FLIP saves therefore remain intact.
+- Portable `.red3dskin` export/import now preserves `projectYawOffset`, and donor-rig clones inherit it from their donor, preventing the same forward-axis problem from returning after export/import.
+
+### Compatibility
+- Retains the v3.1.6 projected-preview centering fix and all existing selector, animation, physics, Gen 1, Gen 2, accessory, and import behavior.
+
+## v3.1.6 - Naruto/BelleStarmon facing + reliable 3D selector previews
+
+### Fixed
+- Removed the legacy 180-degree voxel yaw corrections from **Naruto** and **BelleStarmon**. The current displacement-driven true-direction facing already supplies their travel bearing, so the extra pi rotation made both characters run while looking backward.
+- Fixed the v3.1.5 non-voxel Skin Selector preview centering path. The fallback projected mesh was already fitted once, then received a second scale-dependent translation that could move differently-sized characters completely outside the preview canvas.
+- The fallback now solves the projected player-foot origin from the measured silhouette centre and draws the positioned mesh without a second transform, so built-in characters remain framed even when Dramatic Shape / Voxel3D is unavailable or its portrait path fails.
+
+### Compatibility
+- Keeps the current Gen1Recomp `dev` mod API contract and the optional Dramatic Shape bridge; no engine files are bundled or replaced.
+- Existing per-character SIZE, FACE FLIP, selector animation, imported skins, Gold bridge, accessories, and BelleStarmon physics settings are preserved.
+
+## v3.0.62 - Wow slower jump + seamless root-motion-free run
+
+- Fixed Wow's Goofy Running loop by treating its final key as the duplicate closing pose it actually is and cancelling the ~1.41-unit baked forward Hips travel across the cycle.
+- Applied the same root-motion cancellation to Catwalk Walk (~1.38 units per cycle), while preserving vertical pelvis bob.
+- Removed horizontal Hips root travel from Wow's Jumping / Running Jump playback; Running Jump contains ~7.03 units of baked forward motion and no longer visually launches the model ahead of the player.
+- Running Jump is now blended in only from Wow's actual run blend, rather than whenever the player is simply moving.
+- Slowed Wow's manual cosmetic jump from 30 to 48 frames (0.8 s at 60 Hz).
+- Jump playback now samples a smaller central section of the long source clips with quintic timing and smooth locomotion-to-jump fade-in/fade-out, reducing fast-forwarded motion during short Gen1 hops.
+- All other characters, OceanGate Titan, donor-rig importer, textures, selector poses, and physics settings are unchanged.
+
+## v3.0.61 - static OceanGate Titan character
+
+- Added the supplied OceanGate Titan model as a built-in selectable character.
+- Titan is intentionally static: one identity root bone, no walk/idle/run/jump animation deformation.
+- Titan still follows player position and turns with movement/facing, so it behaves like a floating vehicle replacement.
+- Added a fixed 4-pixel hover offset above the ground for Titan.
+- Combined the supplied main-body OBJ and glass OBJ into one renderer model.
+- Built a 4096x4096 atlas from Titan_albedo and Glasst_albedo; the supplied glass opacity map drives alpha.
+- Kept v3.0.60 donor-rig importer and every existing character unchanged.
+
+## v3.0.60 - donor-rig clone importer experiment
+
+- Added **CLONE RIG + IMPORT** to Character Import for edited versions of BelleStarmon/Wow.
+- Added **DONOR RIG** selection between BelleStarmon and Wow. The imported character reuses the donor's exact bone hierarchy, rest matrices, behavior profile, locomotion clips, jump clips, and selector poses.
+- Added surface-based skin-weight transfer. Unchanged body vertices use a fast exact bind-space match; newly added/modified geometry blends nearby donor surface influences and keeps at most four normalized bone weights.
+- Transferred Belle/Wow secondary-motion masks alongside skin weights where donor data is available.
+- Added loose `.obj`, `.fbx`, and `.dae` scanning in `red3d_characters/imports`; ZIP packages remain supported. OBJ MTL/textures may sit beside the loose model.
+- Added model-axis repair toggles (**Swap Y/Z**, **Flip X/Y/Z**) plus small fit scale/XYZ offsets for exports whose coordinate convention differs from the donor.
+- Imported donor clones are separate character entries and do not overwrite BelleStarmon or Wow. Saved clones are rebuilt from the source file on startup.
+- Kept the previous manual humanoid rigger as an advanced fallback.
+- Kept v3.0.59's removal of the **EDIT PHYSICS AREA / BREAST AREA** UI.
+
+## v3.0.59 - BelleStarmon selector-pose retarget test + physics-area editor removal
+
+- Removed the **BREAST AREA / EDIT PHYSICS AREA** controls from both desktop and mobile Character Settings for BelleStarmon and Wow.
+- Kept the underlying default anatomical physics masks so breast/body physics still works without the unreliable interactive editor.
+- Added Wow's three static selector poses to BelleStarmon as a compatibility test.
+- Retargeted the poses by matching 46 shared bone names across the two rigs; Belle-only pinky and secondary-motion helper bones are not index-copied.
+- BelleStarmon now exposes the same **SELECTOR POSE: POSE 1 / 3 ... POSE 3 / 3** control as Wow. This changes only the Skin Selector preview.
+
+## v3.0.58 - Wow selector poses + texture orientation fix
+
+- Fixed Wow's Skin Selector preview context so **SELECTOR POSE** now actually applies all three supplied Female Standing Pose clips.
+- Corrected the replacement Wow model's FBX/LÖVE V-axis mismatch by vertically flipping each material tile **inside its existing atlas cell** instead of flipping or rearranging the whole atlas.
+- Fixes the upside-down face and the incorrect vertical orientation on body/arm/leg/nail materials while preserving the model's material assignments.
+- Uses a fresh `wow_new_atlas_v3058.png` path so the corrected texture cannot be hidden by the old cached atlas.
+- Keeps the v3.0.57 model, cherry-red heels/panties, authored locomotion/jump clips, and physics/settings behavior.
+
+## v3.0.57 - Wow selector fix + cherry red heels/panties
+
+- Fixed the replacement Wow model bounds table so the renderer can construct her and the Skin Selector can list her normally.
+- Selector label remains exactly **Wow**.
+- Recolored the replacement model's high-heel material and matching panties/hip-garment material to cherry red (#D2042D).
+- Uses a fresh `wow_new_atlas_v3057.png` atlas path.
+- Keeps the new model, animation set, and three selector poses from v3.0.56.
+
+## v3.0.56 - new Wow model, authored animation set, 3 selector poses
+
+- Replaced Wow with the new model from `wow new(1).zip` and rebuilt its skinning/material atlas from the supplied body, arm, leg, nail, face, heel and hair assets.
+- Replaced Wow locomotion with the supplied `Standing Idle`, `Catwalk Walking`, and `Goofy Running (1)` clips.
+- Added the supplied `in place Jumping` and `Running Jump` clips; jump pose blends according to movement.
+- Added all three supplied Female Standing Pose files to the Skin Selector. Use **SELECTOR POSE** in Character Settings to cycle Pose 1 / 2 / 3.
+- Existing Wow breast/butt/thigh/hair physics settings and dual breast-area controls remain available on the rebuilt model.
+
+## v3.0.55 - remove breast-size deformation
+
+- Removed the experimental BREAST SIZE slider and all breast-size geometry scaling.
+- Restored the pre-size-deformation breast physics behavior from v3.0.52.
+- Kept the two independently positioned/resized breast physics circles, upper/lower physics limits, improved Character Settings mouse-wheel scrolling, Wow 75% torso atlas, slower walk/run timing, and the existing secondary-physics controls.
+
+## v3.0.52 - dual breast circles + vertical limits
+
+- Breast Physics Area editor now has **two independent circles**, one for each breast.
+- Each circle can be dragged separately and has its own radius slider.
+- Mouse wheel in the preview resizes the currently active circle.
+- Added **UPPER LIMIT** and **LOWER LIMIT** sliders with visible horizontal guide lines in the preview.
+- Upper/lower limits softly clamp the breast physics vertically to reduce neck/abdomen spill.
+- Circle positions, radii, and limits save separately for Belle and Wow.
+- RESET AREA restores both circles and both limits.
+
+## v3.0.51 - Breast Physics Area editor + true settings scrolling
+
+- Added **BREAST AREA** editing for Belle and Wow. Entering the editor snaps the 3D preview to front view and shows a circular breast-physics mask overlay.
+- Drag anywhere on the preview while the editor is active to move the circle. Mouse-wheel over the preview changes its radius, and an **AREA RADIUS** slider provides the same adjustment.
+- Added **RESET AREA** and per-character saved X/Y/radius values. The custom circle multiplies the existing safe precomputed breast mask, so it cannot suddenly enable unrelated torso vertices.
+- Reworked desktop mouse-wheel Character Settings browsing to scroll the visible settings window itself rather than only moving the selected row.
+
+## v3.0.50 - forced 75% Wow torso texture
+
+- Repacked Wow to use the user-supplied `75%.png` torso/chest texture explicitly.
+- Wrote the 75% texture into the packaged Wow atlas files and switched Wow to a brand-new atlas filename: `wow_atlas_75pct_v3050.png`.
+- This is a cache-busting refresh intended to make the slight torso/chest texture change actually appear in-game.
+- Keeps v3.0.49 flowing hair improvements and mouse-wheel browsing for Character Settings.
+
+## v3.0.48 - texture refresh + slower walk/run
+
+- Kept the slower corrected Wow walk/run playback from v3.0.47.
+- Repacked Wow with a fresh atlas file path so the new torso/chest texture cannot be hidden by a stale cached atlas.
+- Verified the packaged Wow atlas contains the user-supplied torso/chest texture in the main upper-body region.
+
+## v3.0.47 - Corrected Wow walk/run playback speed
+
+- Simulated Wow's distance-driven gait timing against the supplied Catwalk Walk and Goofy Running clip durations.
+- The previous run cycle could loop in roughly 0.40 seconds at full run speed even though the supplied run animation is about 0.63 seconds long.
+- Changed Wow's locomotion gait distance to 52 pixels per cycle, giving roughly 1.24 seconds per walk cycle at 42 px/s and 0.65 seconds per run cycle at 80 px/s.
+- High-frequency breast/butt/thigh/hair physics remains unchanged; animation speed and physics update frequency are separate.
+- Keeps the v3.0.46 torso texture and flowing lower-back hair changes.
+
+## v3.0.46 - Wow chest texture + improved flowing hair
+
+- Replaced Wow's main torso/chest texture with the user-supplied torso texture.
+- Tuned hair physics to look more flowing and natural, with extra emphasis on the lower back section of the hair.
+- Increased hair motion range and softened the hair spring so the bottom rear hair can lag and sway more visibly.
+- Kept the stable precomputed mask system for buttocks/thigh/hair so enabling those options does not break rendering.
+
+## v3.0.45 - Stable precomputed butt/thigh/hair masks
+
+- Fixed the v3.0.44 crash when enabling BUTTOCKS: the renderer no longer calls any runtime butt/thigh/hair region helper.
+- Buttocks, thighs, and hair now all use precomputed per-vertex masks stored in Belle/Wow model data.
+- Rebuilt Wow buttocks placement from the actual bind-pose rear/glute coordinates: 545 selected vertices, 237 strong-center.
+- Wow thigh mask: 783 selected vertices; Wow hair mask uses the known separate hair geometry (6686 vertices).
+- Belle retains its authored butt/thigh masks with stronger butt visibility and gains a conservative precomputed rear-head hair mask.
+- Keeps breast/butt/thigh/hair toggles, sliders, independent breast/butt/thigh controls, PC mouse controls, and mobile touch controls.
+
+## v3.0.44 - Better butt placement + thigh/hair physics
+
+- Recentered and strengthened buttocks physics so the motion sits more clearly on the glute area instead of feeling too high/low or too weak.
+- Added new **THIGHS** toggle + **THIGH PHYSICS** slider + **INDEPENDENT THIGHS** toggle for Belle and Wow.
+- Added new **HAIR** toggle + **HAIR PHYSICS** slider for Belle and Wow.
+- Kept breast and buttocks physics, independent toggles, PC mouse controls, and mobile controls.
+
+## v3.0.42 - Recovery / renderer fix
+
+- Rebuilt from v3.0.40 rather than continuing from the broken v3.0.41 renderer path.
+- Removed the undefined `red3dFinitePhysicsNumber` calls that could abort model rendering.
+- Belle buttocks physics now uses only the localized post-skin region; butt helper bones remain neutral to avoid double deformation/disappearing meshes.
+- Desktop selector remains on the PC mouse path; only Android/iOS use the dedicated mobile layout.
+- Keeps v3.0.40 breast/buttocks strength sliders and independent-movement switches.
+
+## v3.0.40 - Independent motion switches
+
+- Added **INDEPENDENT BREASTS** and **INDEPENDENT BUTTOCKS** toggles for Belle and Wow.
+- Each toggle saves separately per character.
+- Independent ON keeps separate left/right spring timing, alternating impacts and settling.
+- Independent OFF synchronizes the pair, sharing vertical/depth motion and mirroring lateral motion.
+- Each independent toggle only appears while its matching physics region is enabled.
+- Keeps butter-smooth filtering, phone touch UI, conditional strength sliders, and v3.0.39 buttocks placement.
+
+## v3.0.39 - Buttocks physics + saved dual-region controls
+
+- Added a second saved physics region for Belle and Wow: **BUTTOCKS** with a conditional **BUTTOCKS PHYSICS** strength slider, matching the existing breast-physics UI behavior.
+- Added independently simulated left/right buttocks motion using the same filtered/smoothed spring presentation system used for butter-smooth breast physics.
+- Belle now uses the model's authored buttocks region/weights so the motion stays properly located on the glute area.
+- Wow now adds a conservative rear-hip/glute surface mask so buttocks motion stays on the back of the body instead of the side chest or torso.
+- Breast and buttocks checkboxes save independently for Belle and Wow, and each region can be enabled/disabled without affecting the other.
+- Mobile and desktop selector layouts both show the new BUTTOCKS toggle/slider, with the slider only appearing while the toggle is enabled.
+
+## v3.0.38 - Butter-smooth independent breast physics
+
+- Smoothed Belle and Wow breast physics without removing the independent left/right simulation introduced in v3.0.37.
+- Internally oversamples the spring integration at a minimum of 240 Hz while retaining the existing 120 Hz response profile, reducing sensitivity to uneven phone frame times.
+- Added frame-rate-independent low-pass filtering to each breast's target so animation/gait sampling changes cannot become one-frame twitch impulses.
+- Added filtered movement acceleration input so tiny speed/delta-time fluctuations do not jerk the breast target.
+- Added a separate presentation layer: the hidden spring keeps its full independent position/velocity state while the rendered breast motion smoothly follows it, preventing the visual filter from feeding back into the physics solver.
+- Left and right target filters, spring bodies, and output positions remain fully separate; the single BREAST PHYSICS slider still controls overall strength only.
+- Keeps all v3.0.37 mobile/touch controls, mobile Physics reachability, Wow animation/texture fixes, character importing/renaming, and accessory support.
+
+## v3.0.37 - Independent left/right breast physics
+
+- Split Belle and Wow breast motion into visibly independent left/right spring behavior while retaining the single saved PHYSICS checkbox and BREAST PHYSICS strength slider.
+- Left and right breasts now use separate gait phases, separate idle oscillators, and alternating footfall impulses, so one side can still be settling while the other reacts to the next step.
+- Each side has its own spring response/damping values and keeps completely separate position/velocity state; there is no left/right spring coupling.
+- Jump/landing motion remains shared from character movement, but each side receives a slightly different drive and spring response so they do not move as a locked pair.
+- Keeps v3.0.36 mobile Physics reachability, touch camera controls, Wow's native animation/texture fixes, character renaming/import rigging, and accessory importing.
+
+## v3.0.36 - Mobile settings / Physics reachability
+
+- Fixed Belle/Wow **PHYSICS** controls being unreachable on small phone/internal render resolutions.
+- In mobile mode, **PHYSICS** is now the first Character Settings row for Belle and Wow, so it remains visible even when only one settings row fits.
+- When PHYSICS is enabled, **BREAST PHYSICS** becomes the second row and mobile focus jumps directly to it. Turning Physics off returns focus to the PHYSICS row.
+- Moved the mobile Character Settings **▲ / ▼** paging buttons into the settings title bar, keeping them reachable instead of allowing the lower arrow to fall behind the footer on short screens.
+- Added persistent mobile settings paging so every Character Settings control can be reached one row at a time on low-resolution phone layouts.
+- Updated phone hints to call out the settings ▲/▼ paging controls.
+- Keeps all v3.0.35 touch camera controls and v3.0.34 Wow animation fixes.
+
+## v3.0.35 - Mobile Touch Skin Selector
+
+- Added an Android/iOS-aware phone layout for the Skin Selector while retaining the existing desktop layout on PC.
+- Touch input automatically enables mobile mode on touchscreen hosts even when the OS name is not Android/iOS.
+- Enlarged character rows, settings rows, toggles, +/- buttons, scroll arrows, and footer actions for finger-sized hit targets.
+- Added a permanent 3D-preview touch camera strip: **ORBIT**, **PAN**, **ZOOM -**, **ZOOM +**, and **RESET**.
+- One-finger preview drag orbits or pans according to the selected touch camera mode.
+- Added two-finger gesture tracking: midpoint movement pans the camera and changing finger distance pinch-zooms the preview.
+- Touch releases preserve the remaining finger during a two-finger gesture instead of cancelling the full preview interaction.
+- Phone mode no longer relies on desktop mouse polling or the mod-drawn desktop cursor, preventing fake/captured mouse state from fighting touch input.
+- Mobile rename requests the host software keyboard via `love.keyboard.setTextInput` when supported.
+- Keeps all v3.0.34 behavior, including Wow's rigid quaternion run sampling and seamless loop.
+
+## v3.0.34 - Wow run interpolation / loop repair
+
+- Reworked Wow's supplied `Goofy Running (1).fbx` playback instead of changing to a different animation. The newly re-uploaded FBX is byte-for-byte identical to the clip in `wow.zip`, confirming the visible glitch came from runtime sampling rather than the source file.
+- Wow now interpolates authored FBX rotations with quaternion slerp and translation-only linear interpolation, preventing temporary scale/shear artifacts caused by element-wise 4x4 matrix blending.
+- The Goofy Running clip contains unique keys through its last frame rather than a duplicate closing key, so Wow now interpolates the final run frame directly back to frame zero for a seamless loop.
+- Walk-to-run and idle-to-locomotion blending for Wow also use rigid-transform interpolation.
+- A separate jump FBX was not present in the conversation files at build time, so this build retains v3.0.33's current jump fallback until that file is supplied.
+
+## v3.0.32 - Wow native rig, supplied animations, textures + breast physics
+
+- Rebuilt **Wow** from the native Mixamo skeleton and skin clusters already present in the user's supplied FBX files instead of the v3.0.31 generic auto-rig. This removes the generic arm-axis posing that caused the long/stretched/curling arms.
+- Wow now uses the supplied **Idle.fbx**, **Catwalk Walk Forward HighKnees.fbx**, and **Goofy Running (1).fbx** directly. Locomotion root translation is made in-place for overworld use while preserving the authored bone motion. No unrelated generic arm animation is applied during jumps.
+- Rebuilt Wow's atlas/material mapping from the textures actually supplied in `wow.zip`: `DVD Sized.png` for body, arm/leg diffuse maps, nails, and `wow1.png` for the face/head fallback. Missing external eye/hair/heel maps referenced by the FBX use neutral material colors rather than corrupting the body texture.
+- Added localized `LBreast` / `RBreast` helper weights to Wow and the same simple saved **PHYSICS** checkbox + conditional **BREAST PHYSICS** strength slider used by Belle. Wow physics is OFF on a fresh save and uses its own save keys.
+- Preserves per-save renaming, Character Import rigger, OBJ/FBX/DAE accessory importing, rigid bone attachments, Blender-style selector camera, right-click-safe input, and startup animation-speed stabilization.
+
+## v3.0.31 - Wow character + saved character renaming
+
+- Added the user-supplied `wow.zip` model as a normal built-in selectable character named **Wow**. The included character was rebuilt from `Idle.fbx`, converted from Z-up to the selector's Y-up model space, auto-rigged to the generic humanoid skeleton, and packed with a generated texture atlas using the supplied face/body/arm/leg/nail textures plus safe fallback materials for missing eye/hair/heel maps.
+- Added a **NAME / RENAME** control to every normal character settings panel. Click it, type a new name, press **Enter** to save, **Backspace** to edit, or **Esc** to cancel.
+- Custom names are stored per save using the stable internal character ID, so renaming never breaks selection, animations, Belle physics, rig data, accessories, or exports.
+- Skin Selector rows and the large preview heading update immediately after a rename and restore the saved custom name on the next boot.
+- Improved experimental humanoid-rig memory/performance by deduplicating repeated triangle-corner positions before auto-weighting while preserving per-corner UVs.
+
+## v3.0.30 - First-class Character Import + improved humanoid rigger
+
+- Moved humanoid rigging out of the Accessories editor. **IMPORT CHARACTER** now appears directly in every character's normal Character Settings panel.
+- Added a dedicated `red3d_characters/imports/` ZIP folder for OBJ/FBX/DAE character source models. Existing v3.0.29 rigs sourced from the accessory folder still restore for backward compatibility.
+- New workflow: **Character Settings > Import Character > Scan Character ZIP Folder > choose model/texture > Rig Humanoid Character > Save to Character Selector**.
+- Saved rigs are normal Character Selector entries; they are not accessory attachments.
+- Improved automatic humanoid setup from 16 to 17 editable markers by adding an explicit Spine marker and using mesh slices/extremity clusters to estimate torso centre, shoulders, hands, hips, knees, and feet more robustly.
+- Reworked automatic skin weighting with anatomical side/limb/torso gates so arm weights are less likely to bleed into the torso and leg weights are less likely to cross the pelvis. Up to four normalized influences are retained per vertex.
+- Added **Weight Style: Tight / Balanced / Soft** in addition to the Weight Blend slider.
+- Added direct front-view joint editing: click and drag a joint dot to move its X/Y position; use the existing Z slider for depth. Clicking a joint marker snaps the rig view to Front for predictable editing.
+- Added **Front View / Reset Camera** inside the rigger while retaining the Blender-style orbit/pan/zoom camera for inspection.
+- Character Import includes texture image selection plus UV mapping/flip/swap controls before rigging.
+- Retains v3.0.29/v3.0.28 startup animation stability, DAE/OBJ/FBX importing, rigid accessories, conditional Belle breast slider, and all selector camera/input fixes.
+
+## v3.0.29 - Experimental in-game humanoid rigger
+
+- Added an experimental **RIG AS HUMANOID** workflow for static OBJ/FBX/DAE models already scanned by the accessory importer.
+- Auto-generates a 20-bone humanoid skeleton and an initial set of hips/chest/head/arm/leg joint markers from the imported mesh bounds.
+- Added joint-by-joint X/Y/Z editing, optional left/right mirror editing, weight-blend softness, arm-rest tuning, and character-height tuning.
+- Added **UPDATE ANIMATED PREVIEW** / auto-weight generation. The generated mesh uses up to four nearby bone influences per vertex and previews through the existing GENERIC idle/walk/jump controller.
+- Added approximate front-view joint/skeleton markers over the Skin Selector preview to make joint placement easier while tuning.
+- Added **SAVE RIGGED CHARACTER**. Saved rigs appear as normal selector characters and are rebuilt from the original import ZIP on later loads for that save slot.
+- The rig inherits the accessory's currently selected texture and UV flip/swap choice at the time the rig editor is opened.
+- Rigged-character state is isolated per game save and cleared/reloaded on save-slot changes.
+- Retains v3.0.28 conditional Belle breast slider, DAE/OBJ/FBX importing, rigid accessories, texture fixes, Blender-style preview camera, and startup animation-speed stabilization.
+
+## v3.0.28 - Conditional breast-physics slider
+
+- BelleStarmon now shows only the **PHYSICS** checkbox while breast physics is disabled.
+- The single **BREAST PHYSICS** strength slider appears directly underneath only after **PHYSICS** is checked.
+- Unchecking **PHYSICS** hides the slider without erasing its saved value; re-enabling physics restores the previous slider setting.
+- Keeps v3.0.27 startup animation-speed stabilization, DAE/OBJ/FBX accessory importing, rigid animated-bone attachments, texture fixes, Blender-style preview camera, and the tightened breast-only deformation area.
+
+## v3.0.27 - Startup animation speed stabilization
+
+- Fixed characters occasionally booting with abnormally fast locomotion animation.
+- Replaced single-sample measured gait speed with a five-sample median filter and require three valid samples before measured speed can control cadence.
+- Rejects ultra-short render-boundary speed samples that could interpret a one-pixel movement as near-240 px/s.
+- Adds a short startup grace period where stock step timing is preferred, and clears speed history on map/position discontinuities.
+- Tightened animation delta-time hitch clamping from 100 ms to 50 ms.
+- Skin Selector previews now use their own bounded accumulated animation clock instead of absolute timer phase, preventing boot/focus timer jumps from altering preview playback.
+- Keeps DAE/OBJ/FBX importing, rigid animated-bone accessories, the single Belle breast-physics slider, and all v3.0.26 selector features.
+
+## v3.0.26 - Collada DAE accessories + rigid animation attachment
+
+- Added Collada `.dae` static accessory importing alongside OBJ and FBX.
+- DAE import reads common triangles/polylist/polygons geometry, source/accessor strides, UV coordinates, Y/Z/X-up conversion, material symbols, Collada effects, and external diffuse image references from the ZIP.
+- Reinforced accessory attachment as bone-local placement: saved X/Y/Z, rotation, and scale are evaluated against the selected character's current animated bone every frame, so placed hats/necklaces/etc remain glued to the character through idle, walking, running, jumping, and selector animations.
+- Keeps v3.0.25's single breast-physics slider and all existing camera/texture repair features.
+
+## v3.0.25 - Single breast physics slider
+
+- Added one BelleStarmon **BREAST PHYSICS** slider beneath the existing PHYSICS master checkbox.
+- Slider range is 0%-150%; 100% exactly matches the v3.0.24 tuned breast motion.
+- The slider scales the complete breast effect without exposing the old movement/impact/idle/response matrix.
+- Slider value saves per game; PHYSICS remains the master on/off switch.
+- Keeps the tightened breast-only region, calmer v3.0.24 spring profile, Blender-style preview camera, and accessory importer/material fixes.
+
+## v3.0.24 - Tighter breast area, slightly calmer bounce
+
+- Keeps BelleStarmon's tightened v3.0.22 breast-physics area so the motion stays on the breast mound instead of the side chest.
+- Reduces the visible breast bounce slightly so the motion is less aggressive while keeping the same overall feel.
+- Tuned the fixed PHYSICS preset from 160% visible strength to 135%, with slightly lower movement/landing/idle response and a little more damping.
+- Keeps the Blender-style preview camera, right-click-safe selector input, accessory UV/material fixes, and breast-only physics checkbox behavior.
+
+## v3.0.22 - Belle breast-region tightening
+
+- Tightened BelleStarmon's anatomical breast-physics mask so the motion stays on the actual breast mound instead of bleeding into the lateral side chest/armpit area.
+- Added a stronger front-breast gate plus new inner/outer side gates, while preserving the under-bust exclusion and upper-chest fade-out.
+- Keeps v3.0.21's Blender-style orbit/pan/zoom preview camera, right-click-safe selector input, multi-material accessory texture importing, and doubled breast-physics strength.
+
+## v3.0.20 - Double breast physics strength
+
+- Doubled BelleStarmon visible breast-physics strength from 40% to 80%.
+- Preserved the existing movement, landing, idle, response-speed, damping, and 120 Hz solver timing so this is an amplitude increase rather than a speed/frequency change.
+- Retains the single saved PHYSICS checkbox, breast-only secondary motion, accessory importer, texture fixes, and preview zoom.
+
+## v3.0.19 - Preview wheel zoom + accessory texture repair
+
+- Added mouse-wheel zoom for the Skin Selector 3D preview. Hover the portrait and wheel up/down to zoom; zoom is clamped to a safe 0.55x-2.60x camera range and never affects gameplay/world zoom while the pointer is over the preview.
+- Updated the preview hover/footer help to advertise wheel zoom alongside drag-to-rotate.
+- Accessory ZIP importing now keeps up to 16 plausible texture images instead of permanently choosing one file. The importer prioritizes OBJ MTL references, FBX-embedded filenames, matching model stems, and diffuse/albedo/base-color names while de-prioritizing normal/roughness/metal/specular/mask maps.
+- Added saved per-character/per-accessory **TEXTURE IMAGE** selection so a wrong automatic texture can be corrected live without repacking the ZIP.
+- Added saved texture-fix checkboxes: **FLIP TEXTURE U**, **FLIP TEXTURE V**, **SWAP U/V**, **REPEAT TEXTURE**, and **PIXEL FILTER**. These update the live preview immediately and are applied in gameplay too.
+- Added **RESET TEXTURE FIXES** to return to the importer's preferred image and normal UV/filter/wrap behavior without changing attachment position/rotation/scale.
+- Rescanning a ZIP now rebuilds texture GPU resources so replacing an image inside a same-named ZIP actually refreshes instead of reusing the old cached texture.
+- Retains v3.0.18's working Belle PHYSICS checkbox, accessory bone attachment editor, manual preview rotation, and skin import/export.
+
+## v3.0.18 - Belle Physics checkbox visible-motion fix
+
+- Fixed the PHYSICS checkbox appearing to turn on while the breast motion remained effectively invisible.
+- Kept the fixed 40% Strength / 44% Movement / 113% Jump-Landing / 92% Idle / 83% Response preset requested by the user.
+- Removed the second over-damped attenuation layer that was suppressing that preset in v3.0.16/v3.0.17.
+- Uses a responsive 120 Hz direct-target spring with tight travel limits and mostly vertical/front-back motion.
+- Turning PHYSICS ON seeds a tiny one-time preview impulse so the selector gives immediate visual confirmation.
+- PHYSICS OFF still clears breast spring position and velocity immediately; thigh/buttocks physics remain disabled.
+
+## v3.0.16 - Belle Physics checkbox runtime fix
+
+- Fixed the BelleStarmon **PHYSICS** checkbox changing saved/UI state without reliably driving the live renderer.
+- Added one dedicated `runtimeBellePhysicsEnabled` boolean shared by selector UI, preview springs, gameplay skeleton deformation, and post-skin breast follow.
+- Checkbox UI now reads the live renderer state immediately instead of round-tripping through `mod.save`, so a click takes effect on the same frame.
+- Enabling Physics reapplies the fixed breast preset and resets stale spring momentum; disabling Physics zeros spring position/velocity immediately.
+- Uses a new v3.0.16 per-save enable key so upgrades start OFF until deliberately enabled, then persist normally.
+- Corrected the fixed preset to the values shown in the user's reference screenshot: 40% Breast Strength, 44% Movement Bounce, 113% Jump/Landing, 92% Idle Sway, 83% Response Speed, at 120 Hz.
+- Thigh and buttocks physics remain disabled; unified selector layout and manual-only preview rotation remain unchanged.
+
+## v3.0.14 - Hidden breast physics panel + controller icons
+
+- BelleStarmon now has **breast physics only**. `LThighSoft/RThighSoft` and `LButt/RButt` remain neutral bind-compatible helper bones; there are no thigh/butt spring nodes or post-skin offsets.
+- Belle's normal settings view is intentionally clean and shows only **SIZE** plus a small unlabeled gear button. Clicking the gear, pressing keyboard **P**, or pressing controller **R3** opens/closes the hidden breast physics panel.
+- Restored live slider bars for **Breast Strength**, **Movement Bounce**, **Jump / Landing**, **Idle Sway**, and **Response Speed**, plus a Breast Physics ON/OFF checkbox.
+- The underlying DOA-inspired spring profile and 120 Hz direct-target stepping remain fixed; the sliders tune amplitude/drive without reintroducing style/rate clutter.
+- Added drawn controller-button icons and matching live controls in the Skin Selector footer: D-pad navigation/rotation, L3 setting cycle, X/Y adjustment, LB export, RB import, A use skin, B back, and Belle-only R3 physics options.
+- Existing mouse cursor, slider dragging, preview rotation, import/export, Alt-Tab recovery, and selector-only Belle animation are retained.
+
+## v3.0.13 - Belle preview repair + arcade breast physics
+
+- Fixed BelleStarmon selector preview failure introduced when buttocks physics was removed. Neutral `LButt/RButt` helper bones are held at bind pose rather than sampled from the shorter selector FBX.
+- Added bounds checking to embedded animation sampling so short imported/selector clips cannot crash the whole preview.
+- Buttocks physics stays removed.
+- Breast physics now uses a DOA-inspired arcade response with faster spring stiffness, lower damping, independent left/right timing, stronger movement/impact targets, and explicit takeoff/landing velocity kicks.
+- Added conservative translation/velocity clamps so the more energetic profile remains stable after hitches.
+- Retained the v3.0.12 lower-breast and upper-thigh anatomical masks and the simple checkbox-only UI.
+
+## v3.0.12 - Portable skin packages + Belle physics region cleanup
+
+- Added single-file `.red3dskin` export/import support to the Skin Selector.
+- **EXPORT** packages the highlighted character's generated model Lua, texture atlas frames, and renderer metadata into the writable `red3d_skins/exports/` directory.
+- **IMPORT** scans `red3d_skins/imports/`, validates new packages, compiles their model data, creates renderers, and adds them to the live selector without overwriting built-ins with matching IDs.
+- Declared the Gen1Recomp `filesystem` manifest permission required by the portable package workflow; imported model chunks execute in an empty environment and package/model/atlas payloads have explicit safety-size caps.
+- Removed BelleStarmon buttocks secondary motion from the solver, skeletal helper-bone animation path, post-skin surface follow layer, and selector controls.
+- Raised BelleStarmon's lower thigh physics cutoff from the knee-side region to a smooth 0.815-0.875 model-Y fade so only upper/mid thigh tissue participates.
+- Added a smooth 1.710-1.755 model-Y upper breast cutoff so the physics sits lower on the chest while preserving the under-bust exclusion.
+- BelleStarmon selector controls are now SIZE, BREAST PHYSICS, and THIGH PHYSICS only.
+- Fixed recommended fixed strengths to 102% breast and 104% thigh on the existing 120 Hz classic direct-target solver.
+
+## v3.0.11 - Simplified Belle physics checkboxes
+
+- Replaced BelleStarmon's exposed physics tuning matrix with three persistent on/off checkboxes: breast, thigh, and buttocks physics.
+- All three regions default ON. OFF sets that region's amplitude to zero; ON restores the built-in recommended amplitude.
+- Uses one fixed recommended profile: 120 Hz classic direct-target substepping, full 3D targets, responsive medium-low damping, stronger locomotion/landing drive, and reduced idle sway.
+- Fixed internal region amplitudes to 108% breast, 90% thigh, and 108% buttocks.
+- Legacy style/axes/rate/movement/impact/idle/response save values are ignored by the active solver so old tuning cannot degrade the current feel.
+- Kept the SIZE control because it is character scale, not a physics tuning slider.
+- Updated mouse hit testing/drawing so the new physics rows are real clickable checkboxes while keyboard/controller navigation remains available.
+
+## v3.0.10 - Restore classic direct-target Belle physics
+
+- Restored the punchier pre-v3.0.9 direct-target spring behavior for breast, thigh, and buttock secondary motion.
+- PHYSICS RATE now sets the maximum spring integration step (60/90/120/144/240 Hz) instead of running a target-interpolating fixed accumulator.
+- Every host/game update applies its newest movement, acceleration, jump, and landing target immediately to all spring substeps, preserving sharp impulses and visible overshoot.
+- Default 120 Hz at 60 FPS produces two direct substeps per frame, matching the v3.0.8 spring integration pattern.
+- Removed v3.0.9 previous-target interpolation/accumulator state from the active solver while retaining all v3.0.8+ anatomy, cursor, Alt-Tab, selector animation, and mouse fixes.
+
+## v3.0.9 - BelleStarmon fixed high-rate physics
+
+- Added a persistent **PHYSICS RATE** setting with **60 / 90 / 120 / 144 / 240 Hz** options; new/old saves without the setting default to **120 Hz**.
+- Replaced the previous automatic 90-Hz-ish spring sub-step rule with a true fixed-rate accumulator so the selected value is the actual secondary-physics integration frequency.
+- Interpolates breast, thigh, and buttock target vectors between game/animation updates on every internal physics tick, improving high-rate motion continuity instead of repeating the same low-rate target.
+- Caps catch-up work to 16 physics steps after a hitch or focus transition, preventing large burst updates.
+- Raised the Skin Selector portrait refresh ceiling from **30 FPS to 60 FPS** so the higher-rate physics is visible more clearly while tuning.
+- Keeps **RESPONSE SPEED** separate from simulation rate: rate changes temporal sampling/smoothness; response changes spring frequency/damping behavior.
+- BelleStarmon now exposes eleven selector rows, with PHYSICS RATE inserted after PHYSICS AXES. Mouse/controller/Tab navigation reaches all eleven rows; keyboard 1-9/0 still jumps directly to the first ten.
+
+## v3.0.8 - Skin Selector Alt-Tab / multi-monitor mouse recovery
+
+- Refined BelleStarmon’s secondary-motion skinning in bind-pose/model space so each physics region stays on the intended anatomy.
+- Breast helper influence now smoothly fades out across the under-bust edge and front torso wall, removing the upper-abdominal strip that could move with breast bounce. Remaining skin weights are renormalized so the neutral/bind body shape does not change.
+- Upper-thigh physics now trims only the extreme knee/groin fringe, and buttock physics now softens the lower/top pelvis and forward seam edges to prevent region bleed without shrinking the main soft-tissue areas.
+- Fixed Alt-Tab from the Skin Selector leaving the mouse hidden, captured, or stuck in a stale drag state on another monitor.
+- The selector now releases LÖVE mouse grab and relative mode while it is open, while remembering their previous values for restoration on close.
+- Focus loss immediately cancels slider/model drags, clears polled button state, restores the native OS cursor, and releases capture.
+- Focus regain re-seeds the live cursor position, restores the selector's software-cursor presentation, and suppresses synthetic menu input from the transition.
+- Mouse polling is completely paused while the game is unfocused so clicks on another monitor cannot become phantom selector input when returning.
+
+## v3.0.7 - Skin Selector mouse drag rotation fix
+
+- Fixed preview drag rotation on mouse backends where pointer movement events provide missing/zero `dx` values by calculating delta from the previous absolute cursor X coordinate.
+- Fixed the older polling fallback so movement is forwarded while either a slider **or the 3D model preview** is being dragged.
+- Added compatibility for `moved`, `move`, and `dragged` pointer phase names.
+- Pause the model viewer's automatic showroom spin while dragging, then resume it on release/close for direct 1:1-feeling mouse control.
+
+## v3.0.6 - Skin Selector left-click close fix
+
+- Fixed desktop left-clicks being mirrored into the hidden native `ListMenu` confirm/cancel input and immediately closing the HD Skin Selector.
+- Mouse/touch presses handled by the custom selector now suppress the underlying native menu update for a short input window, so character preview rows, physics controls, sliders, arrows, and model dragging stay inside the selector.
+- **USE THIS SKIN**, **BACK**, right-click Back, keyboard/controller selection, and the existing custom cursor behavior remain intact.
+
+## v3.0.5 - Visible custom cursor + BelleStarmon selector animation
+
+- Added a high-contrast cursor drawn by the mod itself at the live mouse position, fixing Gen1Recomp hosts where mouse clicks worked but the captured OS cursor remained invisible.
+- Hide the native cursor only while the selector is active and restore its prior visibility when the selector closes.
+- Converted the supplied `Goofy Running.fbx` 39-key / 60 Hz Mixamo clip into an embedded BelleStarmon selector-only animation. Root translation is removed so the preview stays centered and the first pose is duplicated as the closing key for a clean loop.
+- Retargeted all 52 imported BelleStarmon bones from source FBX axes into the mod runtime axes. The six secondary-motion helper bones remain driven by the existing spring physics while the clip plays.
+- The preview sets the selector animation flag only for its own skeleton update and clears it immediately afterward, including the error path, so gameplay animations cannot inherit the menu-only clip.
+
+## v3.0.4 - Mouse-first Skin Selector UI
+
+- Rebuilt the Skin Selector layout around a clearer character list and dedicated settings card. On normal desktop resolutions BelleStarmon now shows the live 3D preview beside the complete physics/body control panel instead of cramming controls below the model.
+- Added Gen1Recomp `input.pointer` integration for real mouse/touch pointer events while the selector is active, without changing pointer behavior elsewhere in the game.
+- Added mouse hover feedback and visible system cursor states.
+- Character rows are clickable for preview; **USE THIS SKIN** applies the highlighted character, **BACK** closes the menu, and right-click also acts as Back.
+- Numeric settings now have clickable minus/plus buttons plus click-and-drag slider tracks with 1% mouse precision.
+- Choice settings (PHYSICS STYLE / PHYSICS AXES) now have dedicated clickable previous/next controls.
+- The live 3D preview can be dragged horizontally with the mouse to rotate the model.
+- Added clickable list/settings scroll arrows so hidden rows remain accessible with mouse-only navigation at small window sizes.
+- Kept all existing keyboard/controller navigation and adjustment bindings intact.
+- Added a polling mouse fallback for older Gen1Recomp builds that do not emit the pointer hook.
+
+## v3.0.3 - BelleStarmon advanced physics lab
+
+- Expanded **PHYSICS STYLE** from three to seven saved profiles: **SOFT**, **NATURAL**, **SPRINGY**, **TIGHT**, **HEAVY**, **FLOATY**, and **JELLY**.
+- Added a saved **PHYSICS AXES** mode with **FULL 3D**, **VERTICAL**, **FRONT / BACK**, and **SIDE / SIDE** choices. Disabled axes are zeroed at the spring target and switching modes clears old axis momentum.
+- Added saved **MOVEMENT BOUNCE** (0%-200%) so walk/run/acceleration-driven motion can be tuned separately from jumps and idle.
+- Added saved **JUMP / LANDING** (0%-200%) for takeoff/landing impulse strength. The selector preview now injects a periodic test impulse so this setting is visible live.
+- Added saved **IDLE SWAY** (0%-200%) to independently reduce or exaggerate standing secondary motion.
+- Added saved **RESPONSE SPEED** (50%-200%). Stiffness scales with speed squared and damping scales with speed so each style keeps roughly the same damping character while reacting faster or slower.
+- BelleStarmon's selector now has ten controls and automatically scrolls the control stack while retaining the large 3D preview. Tab/L3 cycles rows; keyboard **1-9** and **0** jump directly to rows 1-10.
+- Existing breast, thigh, and buttock 0%-200% strength controls remain independent and compatible with every new style/axis/advanced setting.
+
+## v3.0.2 - BelleStarmon selectable physics styles
+
+- Added a persistent **PHYSICS STYLE** control to BelleStarmon with **SOFT**, **NATURAL**, and **SPRINGY** response profiles.
+- **SOFT** uses lower stiffness and much higher damping for slower, cushioned body motion with minimal rebound.
+- **NATURAL** keeps the v3.0.1 under-damped response as the default style.
+- **SPRINGY** uses higher stiffness, lower damping, and a slightly stronger target response for faster rebound and longer visible overshoot.
+- Physics style changes apply to the existing weighted breast, upper-thigh, and buttock helper bones while preserving the separate 0%-200% strength sliders for each region.
+- Added spring sub-stepping so low-FPS frames remain stable, especially in SPRINGY mode. Switching style clears old spring velocity so the new response starts cleanly.
+- Skin Selector now has five BelleStarmon controls: SIZE, PHYSICS STYLE, BREAST PHYSICS, THIGH PHYSICS, and BUTTOCKS PHYSICS. Keyboard 1/2/3/4/5 selects each row directly.
+
+## v3.0.1 - BelleStarmon weighted-bone bounce fix
+
+- Fixed BelleStarmon body physics so the six real weighted helper bones (`LBreast`, `RBreast`, `LThighSoft`, `RThighSoft`, `LButt`, `RButt`) now receive the spring simulation directly instead of being forced to bind pose.
+- Added spring-driven translation plus small local flex rotations to make breast, upper-thigh, and buttock motion visibly deform the actual skinned body.
+- Kept a reduced anatomical per-vertex follow layer around each region for smoother surrounding-tissue motion without double-deforming the mesh.
+- Increased locomotion/jump impulses for clearer bounce while preserving the existing 0%-200% per-region sliders.
+- Fixed the non-voxel idle path so BelleStarmon's spring solver continues advancing while standing instead of being skipped by the idle early return.
+
+## v3.0.0 - BelleStarmon real soft-body bounce refresh
+
+- Replaced the previous helper-bone-only motion with an actual per-vertex spring deformation pass so the BREAST, THIGH, and BUTTOCKS sliders visibly deform BelleStarmon's body.
+- Rebuilt BelleStarmon's runtime masks from the original Mixamo skin weights: 457 breast vertices, 276 upper-thigh vertices, and 237 buttock/rear-pelvis vertices now receive dedicated soft-body motion.
+- Added under-damped spring/inertia response driven by walk/run cadence, acceleration, jumping, and landing; motion continues to settle after the driving impulse instead of following a canned pose exactly.
+- The same spring solver runs in the Skin Selector preview, so 0%-200% slider changes can be seen live before selecting the character.
+- Version intentionally remains 3.0.0 for this requested refresh.
+
+## v3.0.0 - BelleStarmon physics controls refresh
+
+- Added BelleStarmon-only BREAST PHYSICS, THIGH PHYSICS, and BUTTOCKS PHYSICS sliders to the self-contained Skin Selector.
+- Physics strengths range from 0% to 200% and persist per save; 100% is the default and 0% disables that region.
+- Rebuilt BelleStarmon with six dedicated secondary-motion bones (left/right chest, upper-thigh soft tissue, and rear pelvis) so all three sliders drive real weighted mesh motion.
+- The physics changes are visible live in the 3D selector preview and also apply during idle, walking, running, and jumping in gameplay.
+- Slider controls: Tab or L3 cycles the active slider; keyboard 1/2/3/4 selects SIZE/BREAST/THIGH/BUTTOCKS directly; X/Y or -/+ adjusts the active slider.
+- Version intentionally remains 3.0.0 for this requested refresh.
+
+## v3.0.0 control refresh
+
+- Kept release version at 3.0.0.
+- Changed Skin Selector SIZE controls from LB/RB to X/Y (Square/Triangle).
+- Added keyboard -/+ and numpad -/+ controls; [/] remain aliases.
+
+## v3.0.0
+
+### Major release
+- Forced the release version to **3.0.0** and alphabetized the complete Skin Selector roster and CHARACTER option list.
+- Added per-character persistent visual scaling from **50% to 150%** with a live SIZE slider in the high-resolution 3D selector. Keyboard `[`/`]` and controller LB/RB adjust scale in 5% steps.
+- The saved scale is applied to the same renderer in overworld and Dramatic Shape battles; movement/collision are unchanged.
+- BelleStarmon Ctrl WALK mode now doubles on-foot step duration for keyboard/digital input, producing exactly half the resolved normal movement speed while retaining the Catwalk animation. Analog-stick pressure blending remains independent.
+- Rebuilt Naruto's atlas with the previously flat dark shoulder-accessory patch replaced by textured navy cloth detail; the authored/original headband mapping from v2.8.74 is retained.
+
+## v2.8.74
+
+### BelleStarmon / Yami / Naruto / Zoro / roster cleanup
+- Added Ctrl-toggle walking for BelleStarmon keyboard/digital movement while preserving analog idle/walk/run pressure blending.
+- Fixed Yami's black eye sockets by restoring transparency to the source lens and eyeshadow overlay materials.
+- Fixed Naruto's forehead protector by using the original headband sheet with authored UVs, removing the previous double-correction.
+- Removed Carl Johnson (CJ) from the character roster, selector/options list, and packaged runtime/source assets.
+- Rebuilt D.O.N. Zoro with lower-body opposite-leg weight cleanup plus side-specific centre-seam duplicates to stop vertices welding across the legs during run animation.
+
 ## v2.8.73
 
 ### Battle Stadium D.O.N. Zoro replacement

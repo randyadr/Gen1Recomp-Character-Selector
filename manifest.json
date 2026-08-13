@@ -1,22 +1,29 @@
 {
   "id": "red_3d_player",
-  "name": "3D Character Selector",
-  "version": "2.8.73",
+  "name": "3D Character Selector - Mobile Touch (Gen 1 + Gen 2)",
+  "version": "3.1.21",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
   "category": "GRAPHICS",
   "game_version": "0.0.0-dev || >=0.1.36 <2.0.0",
+  "games": [
+    "gen1",
+    "gen2"
+  ],
+  "gen2compat": true,
   "priority": 100,
   "dependencies": [],
   "optional_dependencies": [
-    "DRAMATIC_SHAPE"
+    "DRAMATIC_SHAPE",
+    "DRAMALESS_SHAPE"
   ],
   "conflicts": [],
   "permissions": [
+    "filesystem",
     "engine_internals"
   ],
   "affects_link": false,
-  "description": "3D character selector for Gen1Recomp/Dramatic Shape with Red, Yugi Muto, Yami, BelleStarmon, Naruto, Roronoa Zoro, Cloud, Aang, Carl Johnson (CJ), Shrek, and Ash Ketchum.",
+  "description": "Mobile-friendly 3D character selector for Red/Blue/Yellow AND Gold. Adds the same skinned characters to overworld, Dramatic/Dramaless Shape battles, and VR, plus Android double-tap-to-3RD camera access and two-finger voxel-world pinch zoom. Includes static OceanGate Titan, donor-rig cloning, loose OBJ/FBX/DAE imports, accessories, touch controls, collision-safe eight-way movement, and true travel-direction 3D facing.",
   "github": "randyadr/Gen1Recomp-Character-Selector"
 }
