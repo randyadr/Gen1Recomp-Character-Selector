@@ -1,0 +1,50 @@
+name: Build Character Store
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [character-store]
+    paths:
+      - 'tools/build_character_store.py'
+      - '.github/workflows/build-character-store.yml'
+      - 'data/**'
+      - 'assets/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-store:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: character-store
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check pillow
+      - name: Build character packages and thumbnails
+        env:
+          STORE_ROOT: .
+          STORE_OUT: store_build
+          STORE_RAW_BASE: https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store
+        run: python tools/build_character_store.py
+      - name: Publish generated store files
+        run: |
+          rm -rf store/packages store/thumbnails store/preview
+          mkdir -p store
+          cp store_build/index.json store/index.json
+          cp -R store_build/packages store/packages
+          cp -R store_build/thumbnails store/thumbnails
+          cp -R store_build/preview store/preview
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add store/index.json store/packages store/thumbnails store/preview
+          if git diff --cached --quiet; then
+            echo "Store already up to date"
+          else
+            git commit -m "Build downloadable character store [skip ci]"
+            git push origin character-store
+          fi
