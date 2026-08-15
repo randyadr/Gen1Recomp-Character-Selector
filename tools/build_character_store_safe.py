@@ -18,6 +18,9 @@ def required_files(c):
 
 available = []
 for character in store.CHARS:
+    if character.get("id") == "DEXTERS_MOM":
+        print("SKIP DEXTERS_MOM: disabled until model is rebuilt")
+        continue
     missing = [p for p in required_files(character) if not (store.ROOT / p).is_file()]
     if missing:
         print("SKIP", character["id"], "missing:", ", ".join(missing))

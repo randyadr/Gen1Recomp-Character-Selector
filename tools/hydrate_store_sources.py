@@ -4,6 +4,7 @@ from pathlib import Path
 import build_character_store as store
 
 ROOT = Path('.')
+PACKAGE_DIR = ROOT / 'store' / 'packages'
 RELEASES = [
     'https://github.com/randyadr/Gen1Recomp-Character-Selector/releases/download/v3.1.23/red_3d_player-v3_1_23-mod.zip',
     'https://github.com/randyadr/Gen1Recomp-Character-Selector/releases/download/v3.1.21/red_3d_player-v3.1.21.zip',
@@ -39,11 +40,42 @@ def strip_root(name):
     return name
 
 
+def recover_zip_bytes(body, needed, label):
+    recovered = 0
+    with zipfile.ZipFile(io.BytesIO(body)) as z:
+        members = {}
+        for name in z.namelist():
+            rel = strip_root(name)
+            if rel in needed and not name.endswith('/'):
+                members[rel] = name
+        for rel, name in members.items():
+            dst = ROOT / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(z.read(name))
+            needed.discard(rel)
+            recovered += 1
+            print(' recovered', rel, 'from', label)
+    return recovered
+
+
 def main():
     needed = {p for p in needed_paths() if not (ROOT / p).is_file()}
     if not needed:
         print('all store sources already present')
         return
+
+    # v3.3.04+: character package ZIPs are the canonical self-hosted recovery
+    # source. This keeps huge models out of the core branch while allowing
+    # GitHub Actions to rebuild thumbnails, packages, and runtime packets.
+    if PACKAGE_DIR.is_dir():
+        for zp in sorted(PACKAGE_DIR.glob('*.zip')):
+            if not needed:
+                break
+            try:
+                recover_zip_bytes(zp.read_bytes(), needed, zp.as_posix())
+            except Exception as exc:
+                print(' package hydrate failed:', zp, exc)
+
     for url in RELEASES:
         if not needed:
             break
@@ -51,18 +83,7 @@ def main():
         try:
             with urllib.request.urlopen(url, timeout=90) as response:
                 body = response.read()
-            with zipfile.ZipFile(io.BytesIO(body)) as z:
-                members = {}
-                for name in z.namelist():
-                    rel = strip_root(name)
-                    if rel in needed and not name.endswith('/'):
-                        members[rel] = name
-                for rel, name in members.items():
-                    dst = ROOT / rel
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    dst.write_bytes(z.read(name))
-                    needed.discard(rel)
-                    print(' recovered', rel)
+            recover_zip_bytes(body, needed, url)
         except Exception as exc:
             print(' hydrate failed:', exc)
     if needed:

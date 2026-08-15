@@ -10,6 +10,7 @@ on:
       - 'tools/build_runtime_store.py'
       - 'tools/hydrate_store_sources.py'
       - '.github/workflows/build-character-store.yml'
+      - 'store/packages/**'
       - 'data/**'
       - 'assets/**'
 
@@ -28,7 +29,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install --disable-pip-version-check pillow
-      - name: Recover missing sources from historical releases
+      - name: Recover missing sources from store packages and historical releases
         run: python tools/hydrate_store_sources.py
       - name: Build character packages and thumbnails
         env:
