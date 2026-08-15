@@ -2,6 +2,13 @@
   "schema_version": 1,
   "store_name": "Gen1Recomp Character Store",
   "generated_at": "2026-08-15",
+  "distribution": {
+    "core_zip_contains_character_payloads": false,
+    "core_bundled_characters": ["RED"],
+    "thumbnails_are_remote": true,
+    "download_on_demand": true,
+    "free_only": true
+  },
   "categories": ["Pokemon Trainers", "Anime", "Random"],
   "characters": [
     {"id":"RED","name":"Red","category":"Pokemon Trainers","version":"1.0","thumbnail":"thumbnails/red.png","package":null,"bundled":true},
