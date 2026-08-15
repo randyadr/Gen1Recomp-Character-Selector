@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "store_name": "Gen1Recomp Character Store",
+  "generated_at": "2026-08-15",
+  "categories": ["Pokemon Trainers", "Anime", "Random"],
+  "characters": [
+    {"id":"RED","name":"Red","category":"Pokemon Trainers","version":"1.0","thumbnail":"thumbnails/red.png","package":null,"bundled":true},
+    {"id":"ASH","name":"Ash Ketchum","category":"Pokemon Trainers","version":"1.0","thumbnail":"thumbnails/ash.png","package":null,"bundled":false},
+    {"id":"SABRINA","name":"Sabrina","category":"Pokemon Trainers","version":"1.0","thumbnail":"thumbnails/sabrina.png","package":null,"bundled":false},
+    {"id":"HILDA","name":"Hilda","category":"Pokemon Trainers","version":"1.0","thumbnail":"thumbnails/hilda.png","package":null,"bundled":false},
+    {"id":"CYNTHIA","name":"Cynthia","category":"Pokemon Trainers","version":"1.0","thumbnail":"thumbnails/cynthia.png","package":null,"bundled":false},
+    {"id":"AANG","name":"Aang","category":"Anime","version":"1.0","thumbnail":"thumbnails/aang.png","package":null,"bundled":false},
+    {"id":"BELLESTARMON","name":"BelleStarmon","category":"Anime","version":"1.0","thumbnail":"thumbnails/bellestarmon.png","package":null,"bundled":false},
+    {"id":"NARUTO","name":"Naruto","category":"Anime","version":"1.0","thumbnail":"thumbnails/naruto.png","package":null,"bundled":false},
+    {"id":"ZORO","name":"Roronoa Zoro","category":"Anime","version":"1.0","thumbnail":"thumbnails/zoro.png","package":null,"bundled":false},
+    {"id":"NAMI","name":"Nami","category":"Anime","version":"1.0","thumbnail":"thumbnails/nami.png","package":null,"bundled":false},
+    {"id":"YAMI","name":"Yami","category":"Anime","version":"1.0","thumbnail":"thumbnails/yami.png","package":null,"bundled":false},
+    {"id":"YUGI","name":"Yugi Muto","category":"Anime","version":"1.0","thumbnail":"thumbnails/yugi.png","package":null,"bundled":false},
+    {"id":"CLOUD","name":"Cloud","category":"Random","version":"1.0","thumbnail":"thumbnails/cloud.png","package":null,"bundled":false},
+    {"id":"SHREK","name":"Shrek","category":"Random","version":"1.0","thumbnail":"thumbnails/shrek.png","package":null,"bundled":false},
+    {"id":"DEXTERS_MOM","name":"Dexter's Mom","category":"Random","version":"1.0","thumbnail":"thumbnails/dexters_mom.png","package":null,"bundled":false},
+    {"id":"MARIO","name":"Mario (SM64 / SA64)","category":"Random","version":"1.0","thumbnail":"thumbnails/mario.png","package":null,"bundled":false},
+    {"id":"SONIC_SA1","name":"Sonic (Adventure 1)","category":"Random","version":"1.0","thumbnail":"thumbnails/sonic_sa1.png","package":null,"bundled":false},
+    {"id":"SONIC","name":"Sonic the Hedgehog","category":"Random","version":"1.0","thumbnail":"thumbnails/sonic.png","package":null,"bundled":false},
+    {"id":"TITAN","name":"OceanGate Titan","category":"Random","version":"1.0","thumbnail":"thumbnails/titan.png","package":null,"bundled":false},
+    {"id":"UGANDAN_KNUCKLES","name":"Ugandan Knuckles","category":"Random","version":"1.0","thumbnail":"thumbnails/ugandan_knuckles.png","package":null,"bundled":false}
+  ]
+}
