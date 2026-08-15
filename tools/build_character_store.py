@@ -48,14 +48,19 @@ def addon_main(c):
 
 def package_char(c):
     if c.get('bundled'):return None
+    required=[c['data'],*c['atlases'],*c.get('extra',[])]
+    for v in c.get('variants',[]):
+        if v.get('data'): required.append(v['data'])
+        if v.get('atlas'): required.append(v['atlas'])
+        required.extend(v.get('atlasFrames',[]) or [])
+    missing=[rel for rel in required if not (ROOT/rel).exists()]
+    if missing:
+        print(' skip package',c['id'],'missing',', '.join(missing[:3]))
+        return None
     cid=c['id'].lower();d=OUT/'packages_src'/cid;shutil.rmtree(d,ignore_errors=True);d.mkdir(parents=True)
     manifest={'id':c['addon'],'name':f"3D Character: {c['name']}",'version':'1.0.0','api':2,'entry':'main.lua','profile':'content','category':'CONTENT','games':['gen1','gen2'],'game_version':'0.0.0-dev || >=0.1.36 <2.0.0','priority':110,'dependencies':['red_3d_player'],'permissions':[],'description':f"Remote character pack for {c['name']} used by the Gen1Recomp 3D Character Selector.",'github':'randyadr/Gen1Recomp-Character-Selector'}
     (d/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n');(d/'main.lua').write_text(addon_main(c))
-    files={c['data'],*c['atlases'],*c.get('extra',[])}
-    for v in c.get('variants',[]):
-        if v.get('data'):files.add(v['data'])
-        if v.get('atlas'):files.add(v['atlas'])
-        for p in v.get('atlasFrames',[]) or []:files.add(p)
+    files=set(required)
     for rel in sorted(files):
         src=ROOT/rel;dst=d/rel;dst.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(src,dst)
     zp=OUT/'packages'/f'{cid}.zip';zp.parent.mkdir(parents=True,exist_ok=True)
@@ -77,38 +82,96 @@ def matmul(a,b):
 def xform(m,x,y,z):return(m[0]*x+m[1]*y+m[2]*z+m[3],m[4]*x+m[5]*y+m[6]*z+m[7],m[8]*x+m[9]*y+m[10]*z+m[11])
 def make_thumb(c):
     from PIL import Image,ImageDraw
-    model=ROOT/('data/model.lua' if c.get('bundled') else c['data']);atlas=ROOT/('assets/red_atlas.png' if c.get('bundled') else c['atlases'][0]);text=model.read_text(errors='ignore')
-    bp=parse_array(text,'boneParent',int);bl=parse_array(text,'boneLocal');pf=parse_array(text,'posFirst',int);pc=parse_array(text,'posCount',int);ib=parse_array(text,'infBone',int);ix=parse_array(text,'infX');iy=parse_array(text,'infY');iz=parse_array(text,'infZ');iw=parse_array(text,'infW');cp=parse_array(text,'cornerPos',int);cu=parse_array(text,'cornerU');cv=parse_array(text,'cornerV')
-    n=min(len(bp),len(bl)//16);world=[None]*(n+1)
+    if c.get('bundled'):
+      model=ROOT/'data/model.lua'; atlas=ROOT/'assets/red_atlas.png'
+    else:
+      model=ROOT/c['data']; atlas=ROOT/c['atlases'][0]
+    if not model.exists() or not atlas.exists():
+      print(' skip thumbnail',c['id'],'missing source')
+      return None
+    text=model.read_text(errors='ignore')
+    boneParent=parse_array(text,'boneParent',int); boneLocal=parse_array(text,'boneLocal',float)
+    posFirst=parse_array(text,'posFirst',int); posCount=parse_array(text,'posCount',int); infBone=parse_array(text,'infBone',int)
+    infX=parse_array(text,'infX'); infY=parse_array(text,'infY'); infZ=parse_array(text,'infZ'); infW=parse_array(text,'infW')
+    cornerPos=parse_array(text,'cornerPos',int); cornerU=parse_array(text,'cornerU'); cornerV=parse_array(text,'cornerV')
+    n=min(len(boneParent),len(boneLocal)//16)
+    worlds=[None]*(n+1)
     for b in range(1,n+1):
-        lm=bl[(b-1)*16:b*16];par=bp[b-1] if b-1<len(bp) else 0;world[b]=matmul(world[par],lm) if par and world[par] else lm
+      lm=boneLocal[(b-1)*16:b*16]; par=boneParent[b-1] if b-1<len(boneParent) else 0
+      worlds[b]=matmul(worlds[par],lm) if par and worlds[par] else lm
     pts=[]
-    for pi in range(len(pf)):
-        x=y=z=tw=0.0
-        for j in range(pf[pi]-1,pf[pi]-1+pc[pi]):
-            if 0<=j<len(ib) and 0<ib[j]<=n and world[ib[j]]:
-                q=xform(world[ib[j]],ix[j],iy[j],iz[j]);w=iw[j];x+=q[0]*w;y+=q[1]*w;z+=q[2]*w;tw+=w
-        pts.append((x/tw,y/tw,z/tw) if tw>1e-8 else (x,y,z))
-    xs=[p[0] for p in pts];ys=[p[1] for p in pts];zs=[p[2] for p in pts];use_z=(max(zs)-min(zs))>(max(ys)-min(ys))*1.25;ca,sa=math.cos(math.radians(-16)),math.sin(math.radians(-16));proj=[];depth=[]
+    for pi in range(len(posFirst)):
+      x=y=z=tw=0.0; first=posFirst[pi]-1; cnt=posCount[pi]
+      for j in range(first,first+cnt):
+        if j<0 or j>=len(infBone):continue
+        b=infBone[j]; w=infW[j] if j<len(infW) else 0
+        if b<=0 or b>n or not worlds[b]:continue
+        q=xform(worlds[b],infX[j],infY[j],infZ[j]); x+=q[0]*w;y+=q[1]*w;z+=q[2]*w;tw+=w
+      if tw>1e-8: x/=tw;y/=tw;z/=tw
+      pts.append((x,y,z))
+    if not pts or len(cornerPos)<3: return None
+    xs=[p[0] for p in pts]; ys=[p[1] for p in pts]; zs=[p[2] for p in pts]
+    ey=max(ys)-min(ys); ez=max(zs)-min(zs); use_z=ez>ey*1.25
+    angle=math.radians(-16); ca,sa=math.cos(angle),math.sin(angle)
+    proj=[]; depth=[]
     for x,y,z in pts:
-        if use_z:y,z=z,y
-        proj.append((x*ca-z*sa,y));depth.append(x*sa+z*ca)
-    px=[p[0] for p in proj];py=[p[1] for p in proj];minx,maxx,miny,maxy=min(px),max(px),min(py),max(py);scale=min(104/max(maxx-minx,1e-6),112/max(maxy-miny,1e-6));cx=(minx+maxx)/2
-    def screen(i):x,y=proj[i];return(64+(x-cx)*scale,122-(y-miny)*scale)
-    tex=Image.open(atlas).convert('RGBA');tw,th=tex.size;canvas=Image.new('RGBA',(128,128),(15,22,34,255));draw=ImageDraw.Draw(canvas,'RGBA');tc=len(cp)//3;step=max(1,tc//7000);samples=[]
-    for t in range(0,tc,step):
-        inds=[cp[t*3+k]-1 for k in range(3)]
-        if any(i<0 or i>=len(pts) for i in inds):continue
-        u=sum(cu[t*3+k] if t*3+k<len(cu) else .5 for k in range(3))/3;v=sum(cv[t*3+k] if t*3+k<len(cv) else .5 for k in range(3))/3;col=tex.getpixel((max(0,min(tw-1,int(u*(tw-1)))),max(0,min(th-1,int(v*(th-1))))))
-        if col[3]<24:continue
-        sx=sum(screen(i)[0] for i in inds)/3;sy=sum(screen(i)[1] for i in inds)/3;samples.append((sum(depth[i] for i in inds)/3,sx,sy,col))
-    samples.sort(key=lambda q:q[0])
-    for _,sx,sy,col in samples:draw.ellipse((sx-1.1,sy-1.1,sx+1.1,sy+1.1),fill=col)
-    draw.rounded_rectangle((1,1,126,126),radius=12,outline=(74,103,135,255),width=2);raw=canvas.tobytes();enc=base64.b64encode(zlib.compress(raw,9)).decode('ascii');p=OUT/'thumbnails'/f"{c['id'].lower()}.r3dthumb";p.parent.mkdir(parents=True,exist_ok=True);p.write_text(f'R3DTHUMB1\n128\n128\n{enc}\n');pp=OUT/'preview'/f"{c['id'].lower()}.png";pp.parent.mkdir(parents=True,exist_ok=True);canvas.save(pp);return p
+      if use_z: y,z=z,y
+      xr=x*ca-z*sa; zr=x*sa+z*ca
+      proj.append((xr,y)); depth.append(zr)
+    pxs=[p[0] for p in proj]; pys=[p[1] for p in proj]
+    minx,maxx,miny,maxy=min(pxs),max(pxs),min(pys),max(pys)
+    w=max(maxx-minx,1e-6); h=max(maxy-miny,1e-6)
+    OUT_SIZE=256; SS=2; CW=OUT_SIZE*SS
+    scale=min((OUT_SIZE*0.82)/w,(OUT_SIZE*0.88)/h)
+    cx=(minx+maxx)/2
+    def screen(i):
+      x,y=proj[i]
+      return (OUT_SIZE*0.5+(x-cx)*scale, OUT_SIZE*0.94-(y-miny)*scale)
+    tex=Image.open(atlas).convert('RGBA'); tw,th=tex.size
+    canvas=Image.new('RGBA',(CW,CW),(15,22,34,255)); draw=ImageDraw.Draw(canvas,'RGBA')
+    tri_count=len(cornerPos)//3; tris=[]
+    for t in range(tri_count):
+      inds=[]; ok=True
+      for k in range(3):
+        ci=t*3+k; pi=cornerPos[ci]-1 if ci<len(cornerPos) else -1
+        if pi<0 or pi>=len(pts):ok=False;break
+        inds.append(pi)
+      if not ok:continue
+      dep=sum(depth[i] for i in inds)/3; uvs=[]
+      for k in range(3):
+        ci=t*3+k; u=cornerU[ci] if ci<len(cornerU) else .5; v=cornerV[ci] if ci<len(cornerV) else .5; uvs.append((u,v))
+      samples=[]; uv_samples=uvs+[(sum(q[0] for q in uvs)/3,sum(q[1] for q in uvs)/3)]
+      for u,v in uv_samples:
+        tx=max(0,min(tw-1,int(round(u*(tw-1))))); ty=max(0,min(th-1,int(round(v*(th-1))))); samples.append(tex.getpixel((tx,ty)))
+      if sum(c[3] for c in samples)/len(samples)<16:continue
+      col=tuple(int(sum(c[j] for c in samples)/len(samples)) for j in range(4))
+      poly=[(screen(i)[0]*SS,screen(i)[1]*SS) for i in inds]; tris.append((dep,poly,col))
+    tris.sort(key=lambda q:q[0])
+    for _,poly,col in tris:draw.polygon(poly,fill=col)
+    draw.rounded_rectangle((2,2,CW-3,CW-3),radius=22,outline=(74,103,135,255),width=4)
+    canvas=canvas.resize((OUT_SIZE,OUT_SIZE),Image.Resampling.LANCZOS)
+    raw=canvas.tobytes(); enc=base64.b64encode(zlib.compress(raw,9)).decode('ascii')
+    p=OUT/'thumbnails'/f"{c['id'].lower()}.r3dthumb";p.parent.mkdir(parents=True,exist_ok=True)
+    p.write_text(f'R3DTHUMB1\n{OUT_SIZE}\n{OUT_SIZE}\n{enc}\n')
+    pngdir=OUT/'thumbnail_png';pngdir.mkdir(parents=True,exist_ok=True);canvas.save(pngdir/f"{c['id'].lower()}.png")
+    return p
 
 def main():
-    shutil.rmtree(OUT,ignore_errors=True);OUT.mkdir(parents=True);entries=[]
+    shutil.rmtree(OUT,ignore_errors=True); OUT.mkdir(parents=True)
+    entries=[]
     for c in CHARS:
-        make_thumb(c);zp=package_char(c);size=zp.stat().st_size if zp else 0;cid=c['id'].lower();entries.append({'id':c['id'],'name':c['name'],'category':c['category'],'version':'1.0.0','bundled':bool(c.get('bundled')),'addon_mod_id':c.get('addon'),'thumbnail_url':f'{RAW_BASE}/thumbnails/{cid}.r3dthumb','package_url':None if not zp else f'{RAW_BASE}/packages/{cid}.zip','package_size':size,'free':True})
-    (OUT/'index.json').write_text(json.dumps({'schema_version':2,'store_name':'Gen1Recomp Character Store','generated_at':'2026-08-15','categories':['Pokemon Trainers','Anime','Random'],'characters':entries},indent=2)+'\n')
+      print('thumbnail',c['id']); make_thumb(c)
+      zp=package_char(c)
+      size=zp.stat().st_size if zp else 0
+      cid=c['id'].lower()
+      thumb_path=OUT/'thumbnails'/f'{cid}.r3dthumb'
+      entries.append({
+        'id':c['id'],'name':c['name'],'category':c['category'],'version':'1.0.0','bundled':bool(c.get('bundled')),
+        'addon_mod_id':c.get('addon'),'thumbnail_url':f'{RAW_BASE}/thumbnails/{cid}.r3dthumb' if thumb_path.exists() else None,
+        'package_url':None if not zp else f'{RAW_BASE}/packages/{cid}.zip','package_size':size,'free':True
+      })
+      if zp: print(' package',zp.name,round(size/1024/1024,2),'MiB')
+    index={'schema_version':2,'store_name':'Gen1Recomp Character Store','generated_at':'2026-08-15','categories':['Pokemon Trainers','Anime','Random'],'characters':entries}
+    (OUT/'index.json').write_text(json.dumps(index,indent=2)+"\n")
+    print('done')
 if __name__=='__main__':main()
