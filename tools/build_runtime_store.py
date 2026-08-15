@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, zlib
+import base64, json, os, zlib
 from pathlib import Path
 from PIL import Image
 import build_character_store as store
@@ -10,7 +10,8 @@ RAW_BASE = os.environ.get(
     "STORE_RAW_BASE",
     "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store",
 )
-MAGIC = b"RED3DREMOTE2\n"
+MAGIC_V2 = b"RED3DREMOTE2\n"
+MAGIC_V3 = b"RED3DREMOTE3\n"
 
 
 def required_files(c):
@@ -96,11 +97,19 @@ def build_one(c):
         "files": files,
     }
     header_bytes = json.dumps(header, separators=(",", ":")).encode("utf-8")
-    body = MAGIC + str(len(header_bytes)).encode("ascii") + b"\n" + header_bytes + payload
+    binary_v2 = MAGIC_V2 + str(len(header_bytes)).encode("ascii") + b"\n" + header_bytes + payload
+
+    # v3 is deliberately ASCII-only. On Windows Gen1Recomp's curl GET body
+    # travels through a text-mode popen pipe; an arbitrary binary 0x1A can be
+    # interpreted as EOF before the engine's HTTP status marker. Base64 keeps
+    # the exact proven v2 packet while making the transport safe on every host.
+    body = MAGIC_V3 + base64.b64encode(binary_v2) + b"\n"
+
     out = OUT / "runtime" / (c["id"].lower() + ".r3dchar")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(body)
-    print("runtime", out.name, round(len(body) / 1048576, 2), "MiB")
+    assert all(b in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\r\nRED3MOT" for b in body)
+    print("runtime", out.name, round(len(body) / 1048576, 2), "MiB", "text-safe")
     return out
 
 
@@ -115,6 +124,7 @@ def main():
             row["runtime_url"] = RAW_BASE + "/runtime/" + out.name
             row["runtime_size"] = out.stat().st_size
             row["hot_load"] = True
+            row["runtime_format"] = 3
         elif row is not None:
             row["hot_load"] = False
     index_path.write_text(json.dumps(doc, indent=2) + "\n")
