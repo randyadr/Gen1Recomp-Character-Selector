@@ -33,8 +33,9 @@
       "package_size": 2139868,
       "free": true,
       "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/ash.r3dchar",
-      "runtime_size": 2142073,
-      "hot_load": true
+      "runtime_size": 2856114,
+      "hot_load": true,
+      "runtime_format": 3
     },
     {
       "id": "AANG",
@@ -48,8 +49,9 @@
       "package_size": 885097,
       "free": true,
       "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/aang.r3dchar",
-      "runtime_size": 734961,
-      "hot_load": true
+      "runtime_size": 979962,
+      "hot_load": true,
+      "runtime_format": 3
     },
     {
       "id": "BELLESTARMON",
@@ -63,8 +65,9 @@
       "package_size": 3387731,
       "free": true,
       "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/bellestarmon.r3dchar",
-      "runtime_size": 2855290,
-      "hot_load": true
+      "runtime_size": 3807070,
+      "hot_load": true,
+      "runtime_format": 3
     },
     {
       "id": "NARUTO",
@@ -78,8 +81,9 @@
       "package_size": 1979065,
       "free": true,
       "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/naruto.r3dchar",
-      "runtime_size": 1758391,
-      "hot_load": true
+      "runtime_size": 2344538,
+      "hot_load": true,
+      "runtime_format": 3
     },
     {
       "id": "ZORO",
@@ -93,8 +97,9 @@
       "package_size": 1094379,
       "free": true,
       "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/zoro.r3dchar",
-      "runtime_size": 1063299,
-      "hot_load": true
+      "runtime_size": 1417746,
+      "hot_load": true,
+      "runtime_format": 3
     },
     {
       "id": "YAMI",
@@ -108,8 +113,9 @@
       "package_size": 5046268,
       "free": true,
       "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/yami.r3dchar",
-      "runtime_size": 4912597,
-      "hot_load": true
+      "runtime_size": 6550146,
+      "hot_load": true,
+      "runtime_format": 3
     },
     {
       "id": "YUGI",
@@ -123,8 +129,9 @@
       "package_size": 232860,
       "free": true,
       "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/yugi.r3dchar",
-      "runtime_size": 189690,
-      "hot_load": true
+      "runtime_size": 252934,
+      "hot_load": true,
+      "runtime_format": 3
     },
     {
       "id": "CLOUD",
@@ -138,8 +145,9 @@
       "package_size": 199776,
       "free": true,
       "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/cloud.r3dchar",
-      "runtime_size": 172624,
-      "hot_load": true
+      "runtime_size": 230182,
+      "hot_load": true,
+      "runtime_format": 3
     },
     {
       "id": "SHREK",
@@ -153,8 +161,9 @@
       "package_size": 3041350,
       "free": true,
       "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/shrek.r3dchar",
-      "runtime_size": 2468751,
-      "hot_load": true
+      "runtime_size": 3291682,
+      "hot_load": true,
+      "runtime_format": 3
     },
     {
       "id": "TITAN",
@@ -168,8 +177,9 @@
       "package_size": 7740221,
       "free": true,
       "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/titan.r3dchar",
-      "runtime_size": 8737847,
-      "hot_load": true
+      "runtime_size": 11650478,
+      "hot_load": true,
+      "runtime_format": 3
     },
     {
       "id": "UGANDAN_KNUCKLES",
@@ -183,8 +193,9 @@
       "package_size": 2091153,
       "free": true,
       "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/ugandan_knuckles.r3dchar",
-      "runtime_size": 1740295,
-      "hot_load": true
+      "runtime_size": 2320410,
+      "hot_load": true,
+      "runtime_format": 3
     }
   ]
 }
