@@ -39,10 +39,11 @@ jobs:
           cp store_build/index.json store/index.json
           cp -R store_build/packages store/packages
           cp -R store_build/thumbnails store/thumbnails
-          cp -R store_build/preview store/preview
+          if [ -d store_build/preview ]; then cp -R store_build/preview store/preview; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add store/index.json store/packages store/thumbnails store/preview
+          git add store/index.json store/packages store/thumbnails
+          if [ -d store/preview ]; then git add store/preview; fi
           if git diff --cached --quiet; then
             echo "Store already up to date"
           else
