@@ -6,6 +6,7 @@ on:
     branches: [character-store]
     paths:
       - 'tools/build_character_store.py'
+      - 'tools/build_character_store_safe.py'
       - '.github/workflows/build-character-store.yml'
       - 'data/**'
       - 'assets/**'
@@ -30,7 +31,7 @@ jobs:
           STORE_ROOT: .
           STORE_OUT: store_build
           STORE_RAW_BASE: https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store
-        run: python tools/build_character_store.py
+        run: python tools/build_character_store_safe.py
       - name: Publish generated store files
         run: |
           rm -rf store/packages store/thumbnails store/preview
