@@ -18,7 +18,8 @@
       "thumbnail_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/thumbnails/red.r3dthumb",
       "package_url": null,
       "package_size": 0,
-      "free": true
+      "free": true,
+      "hot_load": false
     },
     {
       "id": "ASH",
@@ -30,7 +31,10 @@
       "thumbnail_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/thumbnails/ash.r3dthumb",
       "package_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/packages/ash.zip",
       "package_size": 2139868,
-      "free": true
+      "free": true,
+      "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/ash.r3dchar",
+      "runtime_size": 2142073,
+      "hot_load": true
     },
     {
       "id": "AANG",
@@ -42,7 +46,10 @@
       "thumbnail_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/thumbnails/aang.r3dthumb",
       "package_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/packages/aang.zip",
       "package_size": 885097,
-      "free": true
+      "free": true,
+      "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/aang.r3dchar",
+      "runtime_size": 734961,
+      "hot_load": true
     },
     {
       "id": "BELLESTARMON",
@@ -54,7 +61,10 @@
       "thumbnail_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/thumbnails/bellestarmon.r3dthumb",
       "package_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/packages/bellestarmon.zip",
       "package_size": 3387731,
-      "free": true
+      "free": true,
+      "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/bellestarmon.r3dchar",
+      "runtime_size": 2855290,
+      "hot_load": true
     },
     {
       "id": "NARUTO",
@@ -66,7 +76,10 @@
       "thumbnail_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/thumbnails/naruto.r3dthumb",
       "package_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/packages/naruto.zip",
       "package_size": 1979065,
-      "free": true
+      "free": true,
+      "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/naruto.r3dchar",
+      "runtime_size": 1758391,
+      "hot_load": true
     },
     {
       "id": "ZORO",
@@ -78,7 +91,10 @@
       "thumbnail_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/thumbnails/zoro.r3dthumb",
       "package_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/packages/zoro.zip",
       "package_size": 1094379,
-      "free": true
+      "free": true,
+      "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/zoro.r3dchar",
+      "runtime_size": 1063299,
+      "hot_load": true
     },
     {
       "id": "YAMI",
@@ -90,7 +106,10 @@
       "thumbnail_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/thumbnails/yami.r3dthumb",
       "package_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/packages/yami.zip",
       "package_size": 5046268,
-      "free": true
+      "free": true,
+      "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/yami.r3dchar",
+      "runtime_size": 4912597,
+      "hot_load": true
     },
     {
       "id": "YUGI",
@@ -102,7 +121,10 @@
       "thumbnail_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/thumbnails/yugi.r3dthumb",
       "package_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/packages/yugi.zip",
       "package_size": 232860,
-      "free": true
+      "free": true,
+      "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/yugi.r3dchar",
+      "runtime_size": 189690,
+      "hot_load": true
     },
     {
       "id": "CLOUD",
@@ -114,7 +136,10 @@
       "thumbnail_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/thumbnails/cloud.r3dthumb",
       "package_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/packages/cloud.zip",
       "package_size": 199776,
-      "free": true
+      "free": true,
+      "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/cloud.r3dchar",
+      "runtime_size": 172624,
+      "hot_load": true
     },
     {
       "id": "SHREK",
@@ -126,7 +151,10 @@
       "thumbnail_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/thumbnails/shrek.r3dthumb",
       "package_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/packages/shrek.zip",
       "package_size": 3041350,
-      "free": true
+      "free": true,
+      "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/shrek.r3dchar",
+      "runtime_size": 2468751,
+      "hot_load": true
     },
     {
       "id": "TITAN",
@@ -138,7 +166,10 @@
       "thumbnail_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/thumbnails/titan.r3dthumb",
       "package_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/packages/titan.zip",
       "package_size": 7740221,
-      "free": true
+      "free": true,
+      "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/titan.r3dchar",
+      "runtime_size": 8737847,
+      "hot_load": true
     },
     {
       "id": "UGANDAN_KNUCKLES",
@@ -150,7 +181,10 @@
       "thumbnail_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/thumbnails/ugandan_knuckles.r3dthumb",
       "package_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/packages/ugandan_knuckles.zip",
       "package_size": 2091153,
-      "free": true
+      "free": true,
+      "runtime_url": "https://raw.githubusercontent.com/randyadr/Gen1Recomp-Character-Selector/character-store/store/runtime/ugandan_knuckles.r3dchar",
+      "runtime_size": 1740295,
+      "hot_load": true
     }
   ]
 }
